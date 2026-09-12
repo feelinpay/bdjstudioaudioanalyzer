@@ -1,0 +1,14 @@
+[package]
+name = "bdja_cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bdja_core = { path = "../bdja_core" }
+bdja_decode = { path = "../bdja_decode" }
+bdja_dsp = { path = "../bdja_dsp" }
+bdja_verdict = { path = "../bdja_verdict" }
+bdja_scan = { path = "../bdja_scan" }
+bdja_store = { path = "../bdja_store" }

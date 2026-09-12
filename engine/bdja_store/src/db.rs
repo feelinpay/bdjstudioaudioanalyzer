@@ -1,0 +1,246 @@
+use std::collections::HashMap;
+use std::path::Path;
+use parking_lot::Mutex;
+use rusqlite::{params, Connection};
+use bdja_core::types::{Evidence, FileReport, FormatFacts, QualityMetrics, Verdict};
+
+pub struct ReportStore {
+    conn: Mutex<Connection>,
+}
+
+impl ReportStore {
+    pub fn open_in_memory() -> Result<Self, rusqlite::Error> {
+        let conn = Connection::open_in_memory()?;
+        let store = Self {
+            conn: Mutex::new(conn),
+        };
+        store.init_schema()?;
+        Ok(store)
+    }
+
+    pub fn open(path: &Path) -> Result<Self, rusqlite::Error> {
+        let conn = Connection::open(path)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        let store = Self {
+            conn: Mutex::new(conn),
+        };
+        store.init_schema()?;
+        Ok(store)
+    }
+
+    fn init_schema(&self) -> Result<(), rusqlite::Error> {
+        let conn = self.conn.lock();
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS file_report (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                file_size INTEGER NOT NULL,
+                engine_rev INTEGER NOT NULL,
+                container TEXT NOT NULL,
+                codec TEXT NOT NULL,
+                sample_rate INTEGER NOT NULL,
+                bit_depth INTEGER,
+                channels INTEGER NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                container_bitrate_kbps INTEGER,
+                is_lossless_declared INTEGER NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                score_llr REAL NOT NULL,
+                effective_bandwidth_hz INTEGER,
+                cutoff_slope_db_oct REAL,
+                true_peak_dbtp REAL,
+                lufs_integrated REAL,
+                clipped_samples INTEGER NOT NULL,
+                dc_offset REAL,
+                dynamic_range_db REAL,
+                stereo_correlation REAL,
+                guards_json TEXT NOT NULL,
+                evidences_json TEXT NOT NULL,
+                verdict_summary TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_verdict ON file_report(verdict);
+            ",
+        )?;
+        Ok(())
+    }
+
+    pub fn save_report(&self, report: &FileReport) -> Result<i64, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let guards_json = serde_json::to_string(&report.guards_triggered).unwrap_or_default();
+        let evidences_json = serde_json::to_string(&report.evidences).unwrap_or_default();
+        let verdict_str = format!("{:?}", report.verdict);
+
+        conn.execute(
+            "
+            INSERT OR REPLACE INTO file_report (
+                path, file_size, engine_rev, container, codec, sample_rate,
+                bit_depth, channels, duration_ms, container_bitrate_kbps,
+                is_lossless_declared, verdict, confidence, score_llr,
+                effective_bandwidth_hz, cutoff_slope_db_oct, true_peak_dbtp,
+                lufs_integrated, clipped_samples, dc_offset, dynamic_range_db,
+                stereo_correlation, guards_json, evidences_json, verdict_summary
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
+            );
+            ",
+            params![
+                report.path,
+                report.file_size,
+                report.engine_rev,
+                report.facts.container,
+                report.facts.codec,
+                report.facts.sample_rate,
+                report.facts.bit_depth,
+                report.facts.channels,
+                report.facts.duration_ms,
+                report.facts.container_bitrate_kbps,
+                if report.facts.is_lossless_declared { 1 } else { 0 },
+                verdict_str,
+                report.confidence,
+                report.score_llr,
+                report.effective_bandwidth_hz,
+                report.cutoff_slope_db_oct,
+                report.quality.true_peak_dbtp,
+                report.quality.lufs_integrated,
+                report.quality.clipped_samples,
+                report.quality.dc_offset,
+                report.quality.dynamic_range_db,
+                report.quality.stereo_correlation,
+                guards_json,
+                evidences_json,
+                report.verdict_summary,
+            ],
+        )?;
+
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_reports(
+        &self,
+        verdict_filter: Option<&str>,
+        search: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<FileReport>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let mut query = "SELECT id, path, file_size, engine_rev, container, codec, sample_rate, bit_depth, channels, duration_ms, container_bitrate_kbps, is_lossless_declared, verdict, confidence, score_llr, effective_bandwidth_hz, cutoff_slope_db_oct, true_peak_dbtp, lufs_integrated, clipped_samples, dc_offset, dynamic_range_db, stereo_correlation, guards_json, evidences_json, verdict_summary FROM file_report WHERE 1=1".to_string();
+
+        if let Some(v) = verdict_filter {
+            if !v.is_empty() && v != "ALL" {
+                query.push_str(&format!(" AND verdict = '{}'", v.replace("'", "''")));
+            }
+        }
+        if let Some(s) = search {
+            if !s.is_empty() {
+                query.push_str(&format!(" AND path LIKE '%{}%'", s.replace("'", "''")));
+            }
+        }
+
+        query.push_str(&format!(" ORDER BY id DESC LIMIT {} OFFSET {}", limit, offset));
+
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let path: String = row.get(1)?;
+            let file_size: u64 = row.get(2)?;
+            let engine_rev: u32 = row.get(3)?;
+            let container: String = row.get(4)?;
+            let codec: String = row.get(5)?;
+            let sample_rate: u32 = row.get(6)?;
+            let bit_depth: Option<u16> = row.get(7)?;
+            let channels: u16 = row.get(8)?;
+            let duration_ms: u64 = row.get(9)?;
+            let container_bitrate_kbps: Option<u32> = row.get(10)?;
+            let is_lossless_declared: bool = row.get::<_, i64>(11)? != 0;
+            let verdict_str: String = row.get(12)?;
+            let confidence: f64 = row.get(13)?;
+            let score_llr: f64 = row.get(14)?;
+            let effective_bandwidth_hz: Option<u32> = row.get(15)?;
+            let cutoff_slope_db_oct: Option<f64> = row.get(16)?;
+            let true_peak_dbtp: Option<f64> = row.get(17)?;
+            let lufs_integrated: Option<f64> = row.get(18)?;
+            let clipped_samples: u64 = row.get(19)?;
+            let dc_offset: Option<f64> = row.get(20)?;
+            let dynamic_range_db: Option<f64> = row.get(21)?;
+            let stereo_correlation: Option<f64> = row.get(22)?;
+            let guards_json: String = row.get(23)?;
+            let evidences_json: String = row.get(24)?;
+            let verdict_summary: String = row.get(25)?;
+
+            let verdict = match verdict_str.as_str() {
+                "LosslessVerified" => Verdict::LosslessVerified,
+                "LikelyLossless" => Verdict::LikelyLossless,
+                "Inconclusive" => Verdict::Inconclusive,
+                "Suspicious" => Verdict::Suspicious,
+                "ProbableTranscode" => Verdict::ProbableTranscode,
+                _ => Verdict::DeclaredLossy,
+            };
+
+            let guards_triggered: Vec<String> = serde_json::from_str(&guards_json).unwrap_or_default();
+            let evidences: Vec<Evidence> = serde_json::from_str(&evidences_json).unwrap_or_default();
+
+            Ok(FileReport {
+                file_id: id,
+                path,
+                file_size,
+                engine_rev,
+                facts: FormatFacts {
+                    container,
+                    codec,
+                    sample_rate,
+                    bit_depth,
+                    channels,
+                    duration_ms,
+                    container_bitrate_kbps,
+                    is_lossless_declared,
+                },
+                verdict,
+                confidence,
+                score_llr,
+                effective_bandwidth_hz,
+                cutoff_slope_db_oct,
+                evidences,
+                quality: QualityMetrics {
+                    true_peak_dbtp,
+                    lufs_integrated,
+                    clipped_samples,
+                    dc_offset,
+                    dynamic_range_db,
+                    stereo_correlation,
+                },
+                guards_triggered,
+                verdict_summary,
+            })
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            if let Ok(item) = r {
+                list.push(item);
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn count_by_verdict(&self) -> Result<HashMap<String, u64>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT verdict, COUNT(*) FROM file_report GROUP BY verdict")?;
+        let rows = stmt.query_map([], |row| {
+            let v: String = row.get(0)?;
+            let count: u64 = row.get(1)?;
+            Ok((v, count))
+        })?;
+
+        let mut map = HashMap::new();
+        for r in rows {
+            if let Ok((v, count)) = r {
+                map.insert(v, count);
+            }
+        }
+        Ok(map)
+    }
+}

@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "bdja_core",
+    "bdja_decode",
+    "bdja_dsp",
+    "bdja_verdict",
+    "bdja_scan",
+    "bdja_store",
+    "bdja_worker",
+    "bdja_ipc",
+    "bdja_ffi",
+    "bdja_cli",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+authors = ["BDJ Studio <dev@bdjstudio.com>"]
+license = "Proprietary"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

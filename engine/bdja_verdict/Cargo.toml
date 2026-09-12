@@ -1,0 +1,11 @@
+[package]
+name = "bdja_verdict"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bdja_core = { path = "../bdja_core" }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"

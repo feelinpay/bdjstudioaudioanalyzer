@@ -1,0 +1,43 @@
+name: bdj_studio_audio_analyzer
+description: "BDJ Studio Audio Analyzer - Control de Calidad y Detección de Falsos Lossless para DJs"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.5.1
+  flutter_rust_bridge: 2.13.0
+
+  # Licenciamiento SPP3 alineado con la suite
+  bdj_license_core:
+    path: ../../bdj_license_core
+  dartz: ^0.10.1
+  device_info_plus: ^11.5.0
+  flutter_secure_storage: ^10.3.1
+  package_info_plus: ^9.0.1
+  shared_preferences: ^2.3.4
+
+  crypto: ^3.0.3
+  cryptography: ^2.7.0
+
+  desktop_drop: ^0.4.4
+  file_selector: ^1.1.0
+  window_manager: ^0.3.9
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

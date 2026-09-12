@@ -1,0 +1,21 @@
+[package]
+name = "bdja_scan"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bdja_core = { path = "../bdja_core" }
+bdja_decode = { path = "../bdja_decode" }
+bdja_dsp = { path = "../bdja_dsp" }
+bdja_verdict = { path = "../bdja_verdict" }
+bdja_store = { path = "../bdja_store" }
+jwalk = "0.8"
+crossbeam-channel = "0.5"
+blake3 = "1.5"
+thiserror = "2.0"
+tracing = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_SystemInformation"] }

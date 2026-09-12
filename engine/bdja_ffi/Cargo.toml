@@ -1,0 +1,25 @@
+[package]
+name = "bdja_ffi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[lints.rust]
+linker_messages = "allow"
+
+[dependencies]
+bdja_core = { path = "../bdja_core" }
+bdja_scan = { path = "../bdja_scan" }
+bdja_store = { path = "../bdja_store" }
+bdja_decode = { path = "../bdja_decode" }
+bdja_dsp = { path = "../bdja_dsp" }
+bdja_verdict = { path = "../bdja_verdict" }
+jwalk = "0.8"
+flutter_rust_bridge = "=2.13.0"
+thiserror = "2.0"
+tracing = "0.1"
+parking_lot = "0.12"
