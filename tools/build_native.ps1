@@ -1,4 +1,4 @@
-﻿param(
+param(
     [switch]$SkipCodegen
 )
 
@@ -52,7 +52,8 @@ Start-Sleep -Milliseconds 300
 $artifacts = @(
     (Join-Path $Engine 'target\release\bdja_ffi.dll'),
     (Join-Path $Engine 'target\release\bdja_worker.exe'),
-    (Join-Path $Engine 'target\release\bdja_cli.exe')
+    (Join-Path $Engine 'target\release\bdja_cli.exe'),
+    (Join-Path $Root 'logo.png')
 )
 
 foreach ($dir in @($FFIDebug, $FFIRelease)) {
