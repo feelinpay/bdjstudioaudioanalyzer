@@ -79,9 +79,10 @@ pub struct FileReportFfi {
     pub spectrum_db: Vec<f32>,
 }
 
-fn map_report_to_ffi(report: FileReport, spectrum_db: Vec<f32>) -> FileReportFfi {
+fn map_report_to_ffi(report: FileReport) -> FileReportFfi {
     let verdict_code = format!("{:?}", report.verdict);
     let verdict_name = report.verdict.display_name().to_string();
+    let spectrum_db = report.average_spectrum_db;
 
     FileReportFfi {
         file_id: report.file_id,
@@ -196,8 +197,7 @@ pub fn analyze_file(path: String) -> Result<FileReportFfi, String> {
         }
     }
 
-    let spectrum_db = generate_spectrum_curve(&report);
-    Ok(map_report_to_ffi(report, spectrum_db))
+    Ok(map_report_to_ffi(report))
 }
 
 /// Analisis rapido preliminar (alias compatible).
@@ -220,8 +220,7 @@ pub fn analyze_batch(paths: Vec<String>) -> Result<Vec<FileReportFfi>, String> {
                     report.file_id = id;
                 }
             }
-            let spec = generate_spectrum_curve(&report);
-            results.push(map_report_to_ffi(report, spec));
+            results.push(map_report_to_ffi(report));
         }
     }
     Ok(results)
@@ -258,8 +257,7 @@ pub fn scan_directory_audio(root_path: String, max_files: u32) -> Result<Vec<Fil
                     report.file_id = id;
                 }
             }
-            let spec = generate_spectrum_curve(&report);
-            reports.push(map_report_to_ffi(report, spec));
+            reports.push(map_report_to_ffi(report));
         }
     }
 
@@ -287,10 +285,7 @@ pub fn query_saved_reports(
 
     Ok(reports
         .into_iter()
-        .map(|r| {
-            let spec = generate_spectrum_curve(&r);
-            map_report_to_ffi(r, spec)
-        })
+        .map(map_report_to_ffi)
         .collect())
 }
 
@@ -327,26 +322,4 @@ pub fn diagnostics() -> Result<String, String> {
         ENGINE_REV,
         *INITIALIZED.read()
     ))
-}
-
-fn generate_spectrum_curve(report: &FileReport) -> Vec<f32> {
-    let cutoff_hz = report.effective_bandwidth_hz.unwrap_or(20000) as f32;
-    let nyquist = (report.facts.sample_rate / 2) as f32;
-    let slope = report.cutoff_slope_db_oct.unwrap_or(24.0) as f32;
-
-    let points = 256;
-    let mut curve = Vec::with_capacity(points);
-
-    for i in 0..points {
-        let f = (i as f32 / (points - 1) as f32) * nyquist;
-        let db = if f <= cutoff_hz {
-            -12.0 - 18.0 * (f / cutoff_hz.max(1.0))
-        } else {
-            let octaves = (f / cutoff_hz.max(1.0)).log2();
-            (-30.0 - slope * octaves).clamp(-120.0, -30.0)
-        };
-        curve.push(db);
-    }
-
-    curve
 }

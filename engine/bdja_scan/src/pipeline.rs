@@ -1,5 +1,5 @@
 use std::path::Path;
-use bdja_core::types::{FileReport, FormatFacts, QualityMetrics, Verdict, ENGINE_REV};
+use bdja_core::types::{Codec, FileReport, FormatFacts, QualityMetrics, Verdict, ENGINE_REV};
 use bdja_decode::decode_audio_file;
 use bdja_dsp::run_dsp_analysis;
 use bdja_verdict::evaluate_verdict;
@@ -25,6 +25,7 @@ pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
                 facts: FormatFacts {
                     container: "UNKNOWN".to_string(),
                     codec: "UNSUPPORTED".to_string(),
+                    codec_type: Codec::Unknown,
                     sample_rate: 0,
                     bit_depth: None,
                     channels: 0,
@@ -48,6 +49,7 @@ pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
                 },
                 guards_triggered: vec![format!("Fallo de decodificacion: {}", e)],
                 verdict_summary: format!("No se pudo decodificar el archivo de audio: {}", e),
+                average_spectrum_db: vec![-120.0; 256],
             });
         }
     };
@@ -62,9 +64,9 @@ pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
         decoded.max_peak,
         decoded.clipped_samples,
         decoded.dc_offset,
-        decoded.forensic.has_xing_lame_header,
+        decoded.forensic.has_lossy_encoder_signature,
         decoded.forensic.encoder_string.as_deref(),
-        decoded.forensic.has_anomalous_id3_in_wav,
+        decoded.forensic.has_dj_metadata,
         decoded.forensic.is_extension_mismatch,
     );
 
@@ -91,5 +93,6 @@ pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
         quality: dsp_out.quality,
         guards_triggered: dsp_out.guards_triggered,
         verdict_summary: verdict_out.summary,
+        average_spectrum_db: dsp_out.average_spectrum_db,
     })
 }

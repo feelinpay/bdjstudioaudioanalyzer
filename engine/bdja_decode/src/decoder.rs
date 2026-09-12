@@ -2,20 +2,25 @@ use std::fs::File;
 use std::path::Path;
 
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::{
+    DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3,
+    CODEC_TYPE_NULL, CODEC_TYPE_OPUS, CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F32LE,
+    CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S24LE,
+    CODEC_TYPE_PCM_S32BE, CODEC_TYPE_PCM_S32LE, CODEC_TYPE_PCM_U8, CODEC_TYPE_VORBIS,
+    CodecType,
+};
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-use bdja_core::types::FormatFacts;
+use bdja_core::types::{Codec, FormatFacts};
 use crate::error::{DecodeError, Result};
 use crate::forensic::{analyze_forensic_headers, ForensicEvidence};
 
 pub const WINDOW_SIZE_FINE: usize = 8192;
 pub const WINDOW_SIZE_FAST: usize = 1024;
-pub const TARGET_WINDOWS: usize = 192;
 pub const TARGET_SEGMENTS: usize = 12;
 
 #[derive(Debug, Clone, Default)]
@@ -39,6 +44,46 @@ pub struct DecodedAudio {
     pub max_peak: f32,
     pub clipped_samples: u64,
     pub dc_offset: f64,
+}
+
+pub fn map_symphonia_codec(ct: CodecType) -> Codec {
+    match ct {
+        CODEC_TYPE_PCM_S16LE => Codec::PcmS16Le,
+        CODEC_TYPE_PCM_S24LE => Codec::PcmS24Le,
+        CODEC_TYPE_PCM_S32LE => Codec::PcmS32Le,
+        CODEC_TYPE_PCM_F32LE => Codec::PcmF32Le,
+        CODEC_TYPE_PCM_S16BE => Codec::PcmS16Be,
+        CODEC_TYPE_PCM_S24BE => Codec::PcmS24Be,
+        CODEC_TYPE_PCM_S32BE => Codec::PcmS32Be,
+        CODEC_TYPE_PCM_F32BE => Codec::PcmF32Be,
+        CODEC_TYPE_PCM_U8 => Codec::PcmU8,
+        CODEC_TYPE_FLAC => Codec::Flac,
+        CODEC_TYPE_ALAC => Codec::Alac,
+        CODEC_TYPE_MP3 => Codec::Mp3,
+        CODEC_TYPE_AAC => Codec::Aac,
+        CODEC_TYPE_VORBIS => Codec::Vorbis,
+        CODEC_TYPE_OPUS => Codec::Opus,
+        _ => {
+            let debug_name = format!("{:?}", ct);
+            if debug_name.contains("Pcm") {
+                Codec::PcmOther
+            } else if debug_name.contains("Flac") {
+                Codec::Flac
+            } else if debug_name.contains("Alac") {
+                Codec::Alac
+            } else if debug_name.contains("Mp3") {
+                Codec::Mp3
+            } else if debug_name.contains("Aac") {
+                Codec::Aac
+            } else if debug_name.contains("Vorbis") {
+                Codec::Vorbis
+            } else if debug_name.contains("Opus") {
+                Codec::Opus
+            } else {
+                Codec::Unknown
+            }
+        }
+    }
 }
 
 pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
@@ -94,12 +139,10 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
         return Err(DecodeError::DurationExceeded(duration_ms));
     }
 
-    // Format & Codec identification
-    let codec_name = format!("{:?}", codec_params.codec);
-    let is_lossless_declared = match codec_name.as_str() {
-        s if s.contains("Pcm") || s.contains("Flac") || s.contains("Alac") => true,
-        _ => false,
-    };
+    // P0-1 FIX: Canonical Codec identification using Symphonia constants
+    let codec_type = map_symphonia_codec(codec_params.codec);
+    let is_lossless_declared = codec_type.is_lossless();
+    let codec_name = codec_type.display_name().to_string();
 
     let container_bitrate_kbps = if duration_ms > 0 {
         Some(((file_size * 8) / duration_ms) as u32)
@@ -110,6 +153,7 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     let facts = FormatFacts {
         container: forensic.detected_magic_type.clone(),
         codec: codec_name,
+        codec_type,
         sample_rate,
         bit_depth,
         channels,
@@ -123,10 +167,10 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
         .make(&codec_params, &dec_opts)
         .map_err(|e| DecodeError::DecoderInit(e.to_string()))?;
 
-    // Collect decoded samples across track
     let mut left_samples = Vec::with_capacity(WINDOW_SIZE_FINE * 24);
     let mut right_samples = Vec::with_capacity(WINDOW_SIZE_FINE * 24);
-    let mut all_mono = Vec::with_capacity(WINDOW_SIZE_FINE * 32);
+    let mut windows_8192 = Vec::new();
+    let mut windows_1024 = Vec::new();
 
     let mut max_peak: f32 = 0.0;
     let mut clipped_samples: u64 = 0;
@@ -135,68 +179,180 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
 
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
 
-    // Decode packets up to budget limit
-    let max_packets_budget = 4000;
-    let mut packets_read = 0;
+    // P0-3 FIX: Stratified sampling across 12 temporal segments (5% to 95%)
+    let mut seek_successful = false;
 
-    while packets_read < max_packets_budget {
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(SymphoniaError::ResetRequired) => continue,
-            Err(_) => break,
-        };
+    if n_frames > 0 && duration_ms > 10000 {
+        for seg in 0..TARGET_SEGMENTS {
+            let frac = 0.05 + 0.90 * (seg as f64 / (TARGET_SEGMENTS - 1).max(1) as f64);
+            let target_frame = (frac * n_frames as f64) as u64;
 
-        if packet.track_id() != track_id {
-            continue;
-        }
+            if format.seek(SeekMode::Coarse, SeekTo::TimeStamp { ts: target_frame, track_id }).is_ok() {
+                decoder.reset();
+                seek_successful = true;
 
-        packets_read += 1;
+                // Decode audio samples for this segment (accumulate at least 16384 samples)
+                let mut segment_mono = Vec::with_capacity(WINDOW_SIZE_FINE * 2);
+                let mut segment_packets = 0;
 
-        match decoder.decode(&packet) {
-            Ok(audio_buf) => {
-                let spec = *audio_buf.spec();
-                let capacity = audio_buf.capacity();
-
-                let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(capacity as u64, spec));
-                sbuf.copy_interleaved_ref(audio_buf);
-
-                let samples = sbuf.samples();
-                let n_ch = spec.channels.count();
-
-                for frame in samples.chunks(n_ch) {
-                    let (l, r) = if n_ch >= 2 {
-                        (frame[0], frame[1])
-                    } else if n_ch == 1 {
-                        (frame[0], frame[0])
-                    } else {
-                        (0.0, 0.0)
+                while segment_packets < 60 && segment_mono.len() < WINDOW_SIZE_FINE * 2 {
+                    let packet = match format.next_packet() {
+                        Ok(p) => p,
+                        Err(_) => break,
                     };
-
-                    let mono = (l + r) * 0.5;
-
-                    let abs_mono = mono.abs();
-                    if abs_mono > max_peak {
-                        max_peak = abs_mono;
+                    if packet.track_id() != track_id {
+                        continue;
                     }
-                    if abs_mono >= 0.9999 {
-                        clipped_samples += 1;
-                    }
-                    sum_samples += mono as f64;
-                    total_sample_count += 1;
+                    segment_packets += 1;
 
-                    // Collect stratified pool
-                    if all_mono.len() < WINDOW_SIZE_FINE * 32 {
-                        all_mono.push(mono);
-                        if left_samples.len() < WINDOW_SIZE_FINE * 16 {
-                            left_samples.push(l);
-                            right_samples.push(r);
+                    if let Ok(audio_buf) = decoder.decode(&packet) {
+                        let spec = *audio_buf.spec();
+                        let capacity = audio_buf.capacity();
+                        let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(capacity as u64, spec));
+                        sbuf.copy_interleaved_ref(audio_buf);
+
+                        let samples = sbuf.samples();
+                        let n_ch = spec.channels.count();
+
+                        for frame in samples.chunks(n_ch) {
+                            let (l, r) = if n_ch >= 2 {
+                                (frame[0], frame[1])
+                            } else if n_ch == 1 {
+                                (frame[0], frame[0])
+                            } else {
+                                (0.0, 0.0)
+                            };
+                            let mono = (l + r) * 0.5;
+                            let abs_mono = mono.abs();
+                            if abs_mono > max_peak {
+                                max_peak = abs_mono;
+                            }
+                            if abs_mono >= 0.9999 {
+                                clipped_samples += 1;
+                            }
+                            sum_samples += mono as f64;
+                            total_sample_count += 1;
+
+                            segment_mono.push(mono);
+                            if left_samples.len() < WINDOW_SIZE_FINE * 16 {
+                                left_samples.push(l);
+                                right_samples.push(r);
+                            }
                         }
                     }
                 }
+
+                if segment_mono.len() >= WINDOW_SIZE_FINE {
+                    let win = segment_mono[..WINDOW_SIZE_FINE].to_vec();
+                    let energy: f32 = win.iter().map(|s| s * s).sum();
+                    if energy > 0.0001 {
+                        windows_8192.push(win);
+                    }
+                }
+                if segment_mono.len() >= WINDOW_SIZE_FAST * 2 {
+                    windows_1024.push(segment_mono[..WINDOW_SIZE_FAST].to_vec());
+                    windows_1024.push(segment_mono[WINDOW_SIZE_FAST..WINDOW_SIZE_FAST * 2].to_vec());
+                }
             }
-            Err(SymphoniaError::DecodeError(_)) => continue,
-            Err(_) => break,
+        }
+    }
+
+    // Fallback: If seek was not supported or yielded fewer than 4 windows, decode sequentially
+    if !seek_successful || windows_8192.len() < 4 {
+        decoder.reset();
+        let _ = format.seek(SeekMode::Coarse, SeekTo::TimeStamp { ts: 0, track_id });
+
+        let mut all_mono = Vec::with_capacity(WINDOW_SIZE_FINE * 32);
+        let max_packets_budget = 4000;
+        let mut packets_read = 0;
+
+        while packets_read < max_packets_budget {
+            let packet = match format.next_packet() {
+                Ok(p) => p,
+                Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(SymphoniaError::ResetRequired) => continue,
+                Err(_) => break,
+            };
+
+            if packet.track_id() != track_id {
+                continue;
+            }
+
+            packets_read += 1;
+
+            match decoder.decode(&packet) {
+                Ok(audio_buf) => {
+                    let spec = *audio_buf.spec();
+                    let capacity = audio_buf.capacity();
+                    let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(capacity as u64, spec));
+                    sbuf.copy_interleaved_ref(audio_buf);
+
+                    let samples = sbuf.samples();
+                    let n_ch = spec.channels.count();
+
+                    for frame in samples.chunks(n_ch) {
+                        let (l, r) = if n_ch >= 2 {
+                            (frame[0], frame[1])
+                        } else if n_ch == 1 {
+                            (frame[0], frame[0])
+                        } else {
+                            (0.0, 0.0)
+                        };
+
+                        let mono = (l + r) * 0.5;
+                        let abs_mono = mono.abs();
+                        if abs_mono > max_peak {
+                            max_peak = abs_mono;
+                        }
+                        if abs_mono >= 0.9999 {
+                            clipped_samples += 1;
+                        }
+                        sum_samples += mono as f64;
+                        total_sample_count += 1;
+
+                        if all_mono.len() < WINDOW_SIZE_FINE * 32 {
+                            all_mono.push(mono);
+                            if left_samples.len() < WINDOW_SIZE_FINE * 16 {
+                                left_samples.push(l);
+                                right_samples.push(r);
+                            }
+                        }
+                    }
+                }
+                Err(SymphoniaError::DecodeError(_)) => continue,
+                Err(_) => break,
+            }
+        }
+
+        // Slice windows from all_mono if windows_8192 is empty
+        if windows_8192.is_empty() {
+            if all_mono.len() >= WINDOW_SIZE_FINE {
+                let step = (all_mono.len() - WINDOW_SIZE_FINE) / TARGET_SEGMENTS.max(1);
+                for i in 0..TARGET_SEGMENTS {
+                    let start = i * step;
+                    if start + WINDOW_SIZE_FINE <= all_mono.len() {
+                        let w8 = all_mono[start..start + WINDOW_SIZE_FINE].to_vec();
+                        let energy: f32 = w8.iter().map(|s| s * s).sum();
+                        if energy > 0.0001 {
+                            windows_8192.push(w8);
+                        }
+                    }
+                }
+            } else if !all_mono.is_empty() {
+                let mut padded = all_mono.clone();
+                padded.resize(WINDOW_SIZE_FINE, 0.0);
+                windows_8192.push(padded);
+            }
+        }
+
+        if windows_1024.is_empty() && all_mono.len() >= WINDOW_SIZE_FAST {
+            let step_fast = (all_mono.len() - WINDOW_SIZE_FAST) / 32;
+            for i in 0..32 {
+                let start = i * step_fast;
+                if start + WINDOW_SIZE_FAST <= all_mono.len() {
+                    windows_1024.push(all_mono[start..start + WINDOW_SIZE_FAST].to_vec());
+                }
+            }
         }
     }
 
@@ -205,40 +361,6 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     } else {
         0.0
     };
-
-    // Slice stratified windows of 8192 and 1024
-    let mut windows_8192 = Vec::new();
-    let mut windows_1024 = Vec::new();
-
-    if all_mono.len() >= WINDOW_SIZE_FINE {
-        let step = (all_mono.len() - WINDOW_SIZE_FINE) / (TARGET_SEGMENTS.max(1));
-        for i in 0..TARGET_SEGMENTS {
-            let start = i * step;
-            if start + WINDOW_SIZE_FINE <= all_mono.len() {
-                let w8 = all_mono[start..start + WINDOW_SIZE_FINE].to_vec();
-                // Check that window is not completely silent
-                let energy: f32 = w8.iter().map(|s| s * s).sum();
-                if energy > 0.0001 {
-                    windows_8192.push(w8);
-                }
-            }
-        }
-    } else if !all_mono.is_empty() {
-        // Zero pad if shorter than 8192
-        let mut padded = all_mono.clone();
-        padded.resize(WINDOW_SIZE_FINE, 0.0);
-        windows_8192.push(padded);
-    }
-
-    if all_mono.len() >= WINDOW_SIZE_FAST {
-        let step_fast = (all_mono.len() - WINDOW_SIZE_FAST) / 32;
-        for i in 0..32 {
-            let start = i * step_fast;
-            if start + WINDOW_SIZE_FAST <= all_mono.len() {
-                windows_1024.push(all_mono[start..start + WINDOW_SIZE_FAST].to_vec());
-            }
-        }
-    }
 
     let bit_depth_stats = BitDepthStats {
         declared_bits: bit_depth,

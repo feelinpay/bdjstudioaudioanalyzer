@@ -40,6 +40,7 @@ impl ReportStore {
                 engine_rev INTEGER NOT NULL,
                 container TEXT NOT NULL,
                 codec TEXT NOT NULL,
+                codec_type TEXT NOT NULL DEFAULT 'Unknown',
                 sample_rate INTEGER NOT NULL,
                 bit_depth INTEGER,
                 channels INTEGER NOT NULL,
@@ -59,11 +60,15 @@ impl ReportStore {
                 stereo_correlation REAL,
                 guards_json TEXT NOT NULL,
                 evidences_json TEXT NOT NULL,
-                verdict_summary TEXT NOT NULL
+                verdict_summary TEXT NOT NULL,
+                spectrum_json TEXT NOT NULL DEFAULT '[]'
             );
             CREATE INDEX IF NOT EXISTS idx_verdict ON file_report(verdict);
             ",
         )?;
+        // Graceful migrations for any existing DB
+        let _ = conn.execute("ALTER TABLE file_report ADD COLUMN codec_type TEXT NOT NULL DEFAULT 'Unknown'", []);
+        let _ = conn.execute("ALTER TABLE file_report ADD COLUMN spectrum_json TEXT NOT NULL DEFAULT '[]'", []);
         Ok(())
     }
 
@@ -71,20 +76,22 @@ impl ReportStore {
         let conn = self.conn.lock();
         let guards_json = serde_json::to_string(&report.guards_triggered).unwrap_or_default();
         let evidences_json = serde_json::to_string(&report.evidences).unwrap_or_default();
+        let spectrum_json = serde_json::to_string(&report.average_spectrum_db).unwrap_or_default();
         let verdict_str = format!("{:?}", report.verdict);
+        let codec_type_str = format!("{:?}", report.facts.codec_type);
 
         conn.execute(
             "
             INSERT OR REPLACE INTO file_report (
-                path, file_size, engine_rev, container, codec, sample_rate,
+                path, file_size, engine_rev, container, codec, codec_type, sample_rate,
                 bit_depth, channels, duration_ms, container_bitrate_kbps,
                 is_lossless_declared, verdict, confidence, score_llr,
                 effective_bandwidth_hz, cutoff_slope_db_oct, true_peak_dbtp,
                 lufs_integrated, clipped_samples, dc_offset, dynamic_range_db,
-                stereo_correlation, guards_json, evidences_json, verdict_summary
+                stereo_correlation, guards_json, evidences_json, verdict_summary, spectrum_json
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
+                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
             );
             ",
             params![
@@ -93,6 +100,7 @@ impl ReportStore {
                 report.engine_rev,
                 report.facts.container,
                 report.facts.codec,
+                codec_type_str,
                 report.facts.sample_rate,
                 report.facts.bit_depth,
                 report.facts.channels,
@@ -113,6 +121,7 @@ impl ReportStore {
                 guards_json,
                 evidences_json,
                 report.verdict_summary,
+                spectrum_json,
             ],
         )?;
 
@@ -127,7 +136,7 @@ impl ReportStore {
         offset: usize,
     ) -> Result<Vec<FileReport>, rusqlite::Error> {
         let conn = self.conn.lock();
-        let mut query = "SELECT id, path, file_size, engine_rev, container, codec, sample_rate, bit_depth, channels, duration_ms, container_bitrate_kbps, is_lossless_declared, verdict, confidence, score_llr, effective_bandwidth_hz, cutoff_slope_db_oct, true_peak_dbtp, lufs_integrated, clipped_samples, dc_offset, dynamic_range_db, stereo_correlation, guards_json, evidences_json, verdict_summary FROM file_report WHERE 1=1".to_string();
+        let mut query = "SELECT id, path, file_size, engine_rev, container, codec, sample_rate, bit_depth, channels, duration_ms, container_bitrate_kbps, is_lossless_declared, verdict, confidence, score_llr, effective_bandwidth_hz, cutoff_slope_db_oct, true_peak_dbtp, lufs_integrated, clipped_samples, dc_offset, dynamic_range_db, stereo_correlation, guards_json, evidences_json, verdict_summary, codec_type, spectrum_json FROM file_report WHERE 1=1".to_string();
 
         if let Some(v) = verdict_filter {
             if !v.is_empty() && v != "ALL" {
@@ -170,6 +179,8 @@ impl ReportStore {
             let guards_json: String = row.get(23)?;
             let evidences_json: String = row.get(24)?;
             let verdict_summary: String = row.get(25)?;
+            let codec_type_str: String = row.get(26).unwrap_or_else(|_| "Unknown".to_string());
+            let spectrum_json: String = row.get(27).unwrap_or_else(|_| "[]".to_string());
 
             let verdict = match verdict_str.as_str() {
                 "LosslessVerified" => Verdict::LosslessVerified,
@@ -182,6 +193,21 @@ impl ReportStore {
 
             let guards_triggered: Vec<String> = serde_json::from_str(&guards_json).unwrap_or_default();
             let evidences: Vec<Evidence> = serde_json::from_str(&evidences_json).unwrap_or_default();
+            let average_spectrum_db: Vec<f32> = serde_json::from_str(&spectrum_json).unwrap_or_else(|_| vec![-120.0; 256]);
+
+            let codec_type = match codec_type_str.as_str() {
+                "PcmS16Le" => bdja_core::types::Codec::PcmS16Le,
+                "PcmS24Le" => bdja_core::types::Codec::PcmS24Le,
+                "PcmS32Le" => bdja_core::types::Codec::PcmS32Le,
+                "PcmF32Le" => bdja_core::types::Codec::PcmF32Le,
+                "Flac" => bdja_core::types::Codec::Flac,
+                "Alac" => bdja_core::types::Codec::Alac,
+                "Mp3" => bdja_core::types::Codec::Mp3,
+                "Aac" => bdja_core::types::Codec::Aac,
+                "Vorbis" => bdja_core::types::Codec::Vorbis,
+                "Opus" => bdja_core::types::Codec::Opus,
+                _ => bdja_core::types::Codec::Unknown,
+            };
 
             Ok(FileReport {
                 file_id: id,
@@ -191,6 +217,7 @@ impl ReportStore {
                 facts: FormatFacts {
                     container,
                     codec,
+                    codec_type,
                     sample_rate,
                     bit_depth,
                     channels,
@@ -214,6 +241,7 @@ impl ReportStore {
                 },
                 guards_triggered,
                 verdict_summary,
+                average_spectrum_db,
             })
         })?;
 

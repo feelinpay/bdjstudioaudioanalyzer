@@ -1,4 +1,4 @@
-use bdja_core::types::{Evidence, EvidenceCode, FormatFacts, Verdict};
+use bdja_core::types::{Codec, Evidence, EvidenceCode, FormatFacts, Verdict};
 use bdja_verdict::evaluate_verdict;
 
 #[test]
@@ -6,6 +6,7 @@ fn test_declared_lossy() {
     let facts = FormatFacts {
         container: "MP3".to_string(),
         codec: "MP3 Layer III".to_string(),
+        codec_type: Codec::Mp3,
         sample_rate: 44100,
         bit_depth: None,
         channels: 2,
@@ -23,6 +24,7 @@ fn test_clean_lossless() {
     let facts = FormatFacts {
         container: "WAV".to_string(),
         codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
         sample_rate: 44100,
         bit_depth: Some(16),
         channels: 2,
@@ -65,6 +67,7 @@ fn test_transcode_requires_strong_evidence() {
     let facts = FormatFacts {
         container: "WAV".to_string(),
         codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
         sample_rate: 44100,
         bit_depth: Some(16),
         channels: 2,
@@ -114,6 +117,7 @@ fn test_guards_prevent_conviction() {
     let facts = FormatFacts {
         container: "WAV".to_string(),
         codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
         sample_rate: 44100,
         bit_depth: Some(16),
         channels: 2,

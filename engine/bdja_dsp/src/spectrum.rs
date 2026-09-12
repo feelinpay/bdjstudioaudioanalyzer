@@ -38,42 +38,75 @@ pub fn analyze_spectrum(
     let bin_hz = sample_rate as f64 / ((n_bins - 1) * 2) as f64;
     let nyquist = sample_rate as f64 / 2.0;
 
-    // Total energy (excluding DC bin 0)
-    let total_energy: f64 = avg_power.iter().skip(1).map(|&p| p as f64).sum();
+    // Convert to dB scale
+    let db_spectrum: Vec<f64> = avg_power
+        .iter()
+        .map(|&p| 10.0 * (p as f64 + 1e-12).log10())
+        .collect();
 
-    // 1. E01: Effective Bandwidth (99.5% cumulative energy)
-    let mut accum_energy = 0.0;
-    let energy_threshold = total_energy * 0.995;
+    // Smoothed spectrum (5-bin moving window to reduce bin-to-bin variance)
+    let mut smoothed_db = vec![-120.0; n_bins];
+    for i in 0..n_bins {
+        let start = i.saturating_sub(2);
+        let end = (i + 3).min(n_bins);
+        let sum: f64 = db_spectrum[start..end].iter().sum();
+        smoothed_db[i] = sum / (end - start) as f64;
+    }
+
+    // Acoustic presence reference level in the mid band (1 kHz to 6 kHz)
+    let bin_1k = ((1000.0 / bin_hz) as usize).clamp(1, n_bins - 1);
+    let bin_6k = ((6000.0 / bin_hz) as usize).clamp(bin_1k + 1, n_bins - 1);
+    let ref_level = smoothed_db[bin_1k..bin_6k]
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    // High-frequency floor (last 5% of bins up to Nyquist)
+    let high_start = ((0.95 * n_bins as f64) as usize).min(n_bins - 1);
+    let hf_floor: f64 = smoothed_db[high_start..].iter().sum::<f64>()
+        / (n_bins - high_start).max(1) as f64;
+
+    // P0-2 FIX: Detección por BORDE DE CONTENIDO
+    // Un corte de códec lossy produce una caída donde la energía cae abruptamente
+    // hacia el piso de ruido. Buscamos el bin más alto donde haya presencia musical consistente
+    // (al menos 3 bins consecutivos por encima del umbral de significancia acústica).
+    let presence_threshold = (ref_level - 45.0).max(hf_floor + 10.0).max(-90.0);
+
     let mut cutoff_bin = n_bins.saturating_sub(1);
+    let mut consecutive = 0;
 
-    if total_energy > 1e-12 {
-        for (i, &p) in avg_power.iter().enumerate().skip(1) {
-            accum_energy += p as f64;
-            if accum_energy >= energy_threshold {
-                cutoff_bin = i;
+    for i in (bin_1k..n_bins).rev() {
+        if smoothed_db[i] >= presence_threshold {
+            consecutive += 1;
+            if consecutive >= 3 {
+                cutoff_bin = (i + 2).min(n_bins - 1);
                 break;
             }
+        } else {
+            consecutive = 0;
         }
     }
 
-    let effective_bandwidth_hz = ((cutoff_bin as f64 * bin_hz).min(nyquist)) as u32;
+    let measured_hz = cutoff_bin as f64 * bin_hz;
+    let effective_bandwidth_hz = if measured_hz >= nyquist * 0.95 {
+        nyquist as u32
+    } else {
+        measured_hz.round() as u32
+    };
 
     // 2. E02: Cutoff Slope (dB/octave around cutoff)
     let mut cutoff_slope_db_oct = 0.0;
-    if cutoff_bin > 10 && cutoff_bin < n_bins - 10 {
+    if cutoff_bin > 10 && cutoff_bin < n_bins - 10 && effective_bandwidth_hz < (nyquist * 0.95) as u32 {
         let f_center = cutoff_bin as f64 * bin_hz;
-        let delta_f = (f_center * 0.1).max(500.0);
+        let delta_f = (f_center * 0.1).max(400.0);
         let f1 = (f_center - delta_f).max(100.0);
         let f2 = (f_center + delta_f).min(nyquist);
 
         let bin1 = ((f1 / bin_hz) as usize).min(n_bins - 1);
         let bin2 = ((f2 / bin_hz) as usize).min(n_bins - 1);
 
-        let p1 = avg_power[bin1] as f64 + 1e-12;
-        let p2 = avg_power[bin2] as f64 + 1e-12;
-
-        let db1 = 10.0 * p1.log10();
-        let db2 = 10.0 * p2.log10();
+        let db1 = smoothed_db[bin1];
+        let db2 = smoothed_db[bin2];
         let delta_db = (db1 - db2).max(0.0);
 
         let octaves = (f2 / f1).log2().max(0.1);
@@ -118,7 +151,7 @@ pub fn analyze_spectrum(
                 if start < end {
                     let sb_energy: f64 = avg_power[start..end].iter().map(|&p| p as f64).sum::<f64>()
                         / (end - start) as f64;
-                    // If subband energy is 55 dB below the active band peak, it is an empty psychoacoustic hole
+                    // Subband energy 55 dB below the active band peak indicates empty psychoacoustic hole
                     if (sb_energy / band_peak) < 3.16e-6 {
                         empty_subbands += 1;
                     }
@@ -130,6 +163,7 @@ pub fn analyze_spectrum(
 
     // 5. E10: Upsampling (declared > 44.1 kHz, but dead above 21.5 kHz)
     let mut upsampling_detected = false;
+    let total_energy: f64 = avg_power.iter().skip(1).map(|&p| p as f64).sum();
     if sample_rate >= 48000 {
         let bin_21_5k = ((21500.0 / bin_hz) as usize).min(n_bins - 1);
         if bin_21_5k < n_bins {
@@ -140,7 +174,7 @@ pub fn analyze_spectrum(
         }
     }
 
-    // Downsample average spectrum to 256 display points for UI visualization
+    // Real average spectrum in dB (downsampled to 256 display points for UI visualization)
     let display_points = 256;
     let mut average_spectrum_db = Vec::with_capacity(display_points);
     let chunk_size = (n_bins / display_points).max(1);

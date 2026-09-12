@@ -1,9 +1,15 @@
-# BDJ Studio Audio Analyzer — Plan de arquitectura v1.0
+# BDJ Studio Audio Analyzer — Plan de arquitectura v1.1
 
-> Documento v1.0 · 12 de septiembre de 2026 · alcance v1 = motor de veredicto + escaneo masivo. Plataformas: Windows 10+ / macOS 12+.
-> Ruta del proyecto: `Aplicacion_para_DJs\BDJ_Studio_Audio_Analyzer`. Los diagramas van en Mermaid; hay una versión navegable publicada como artifact en Claude.
+> Documento v1.1 · 12 de septiembre de 2026 · alcance v1 = motor de veredicto + escaneo masivo. Plataformas: Windows 10+ / macOS 12+.
+> Cambios de v1.1: E01 redefinido (ver 07) y paleta visual confirmada (ver 13). Los diagramas van en Mermaid.
+
+BDJ Studio · Plan de arquitectura y stack
+
+# BDJ Studio Audio Analyzer
 
 Control de calidad de audio para DJs: detecta cuándo un WAV, FLAC o AIFF que se declara lossless contiene evidencia de haber pasado por MP3, AAC u otra fuente con pérdida. Escaneo de carpetas, discos y USB completos. 100% offline, sin GPU, licenciado con BDJ Studio License.
+
+**Documento** v1.0 · 12 sep 2026 **Alcance** v1 = motor de veredicto + escaneo masivo **Plataformas** Windows 10+ / macOS 12+ **Ruta** …\Aplicacion_para_DJs\BDJ_Studio_Audio_Analyzer
 
 ## 0. Qué promete el producto y qué no
 
@@ -154,7 +160,7 @@ flowchart TB
     O4["Motor de veredicto"]
     O5["SQLite (WAL, checkpoints)"]
   end
-  subgraph A3["ANILLO 3 · N = cores-1 procesos hijo desechables (sin red, sin escritura, RAM y tiempo acotados)"]
+  subgraph A3["ANILLO 3 · N = cores-1 procesos hijo desechables"]
     direction LR
     W1["bdja-worker · decode"]
     W2["bdja-worker · STFT"]
@@ -162,10 +168,11 @@ flowchart TB
     W4["reinicio tras panico"]
   end
   A1 -->|"comandos (FRB)"| A2
-  A2 -->|"Stream&lt;ScanEvent&gt; a 10 Hz"| A1
+  A2 -->|"Stream de ScanEvent a 10 Hz"| A1
   A2 -->|"ruta + presupuesto"| A3
   A3 -->|"features (bincode)"| A2
 ```
+
 
 El anillo 3 es el que toca bytes no confiables. Si un archivo lo mata, el orquestador marca ese archivo como `DECODE_FAILED`, levanta otro worker y el escaneo continúa.
 
@@ -203,19 +210,15 @@ Siete etapas con salida temprana en las tres primeras. El 70 % de los archivos d
 
 ```mermaid
 flowchart LR
-  E0["0 · Triage<br/>&lt;1 ms"] --> E1["1 · Contenedor<br/>~3 ms"]
-  E1 --> E2["2 · Metadata<br/>~2 ms"]
-  E2 --> E3["3 · Decode selectivo<br/>40-600 ms"]
-  E3 --> E4["4 · STFT<br/>60-180 ms"]
-  E4 --> E5["5 · Evidencias<br/>~15 ms"]
-  E5 --> E6["6 · Veredicto<br/>&lt;1 ms"]
+  E0["0 · Triage"] --> E1["1 · Contenedor"] --> E2["2 · Metadata"] --> E3["3 · Decode selectivo"] --> E4["4 · STFT"] --> E5["5 · Evidencias"] --> E6["6 · Veredicto"]
   E0 -.->|"acierto de cache"| E6
   E1 -.->|"codec con perdida declarado"| E6
-  E2 -.->|"no es audio / corrupto / fuera de limites"| E6
+  E2 -.->|"no es audio / corrupto"| E6
 ```
 
 **Presupuesto de muestreo (etapas 3-4):** 192 ventanas de 8192 muestras, estratificadas por percentil de
 energia de banda alta, repartidas en 12 tramos de la pista, descartando silencio y fade.
+
 
 Coste medido sobre el equipo objetivo para un archivo de 4 minutos. La decodificación domina; de ahí que se decodifiquen solo los tramos que se van a analizar, usando *seek*.
 
@@ -237,42 +240,35 @@ La conclusión técnica más importante de la investigación previa: **el corte 
 
 ```text
  0 dB ┤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-      │   ambos espectros coinciden         ┃
-      │   hasta ~15 kHz                     ┃
   -40 ┤                            ╲        ┃
       │                      lossless       ┃
-      │                   (roll-off         ┃
-  -60 ┤                    suave)  ╲        ┃ ← brick-wall a 16,0 kHz
-      │                              ╲      ┃    MP3 128 kbps
-  -90 ┤                                ╲    ┃    pendiente > 60 dB/oct  → E02
-      │                                  ╲  ┃
- -120 ┤                                    ╲┗━━━━━━━━━━━━━━━━━━━━
+  -60 ┤                   (roll-off ╲       ┃ ← brick-wall a 16,0 kHz
+      │                    suave)     ╲     ┃    MP3 128 kbps
+  -90 ┤                                 ╲   ┃    pendiente > 60 dB/oct → E02
+ -120 ┤                                   ╲ ┗━━━━━━━━━━━━━━━━━━━━
       └────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬────
            0     4k     8k    12k    16k    18k    20k  22,05 kHz
 ```
 
-Cortes de referencia: MP3 128 kbps = 16 kHz, 192 = 19 kHz, 256 = 20 kHz, 320 entre 16 y 20,5 kHz.
-AAC y LAME V0 suelen aplicar un *shelf* suave o ningun lowpass: por eso el corte solo no puede ser
-el veredicto, y existen E04 (huecos), E05 (rejilla de bloques) y E07 (joint-stereo).
 
 Cortes típicos de referencia: MP3 128 kbps ≈ 16 kHz, 192 ≈ 19 kHz, 256 ≈ 20 kHz, 320 entre 16 y 20,5 kHz; AAC y LAME V0 suelen aplicar un *shelf* suave o ningún lowpass, y por eso el corte solo no puede ser el veredicto.
 
-| ID  | Evidencia               | Cómo se mide                                                                                                                       | Qué indica                                                                                          | Falso +  |
-|-----|-------------------------|------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|----------|
-| E01 | Ancho de banda efectivo | Frecuencia donde la energía acumulada alcanza el percentil 99,5 %, promediada sobre las ventanas de mayor energía de banda alta    | Contenido ausente muy por debajo de Nyquist                                                         | Alto     |
-| E02 | Pendiente del corte     | dB/octava en la vecindad del corte estimado; brick-wall \> 60 dB/oct frente a roll-off natural \< 18 dB/oct                        | Filtro de encoder frente a limitación acústica                                                      | Medio    |
-| E03 | Shelf de 16 kHz         | Salto de nivel medio entre las bandas 14-16 kHz y 16-18 kHz sin caída progresiva                                                   | Firma clásica de LAME y de AAC a bitrate medio                                                      | Medio    |
-| E04 | Huecos espectrales      | Proporción de *bins* con energía nula o por debajo del piso, agrupados en bandas contiguas, de forma consistente entre ventanas    | **La señal más robusta.** Anulación de coeficientes por enmascaramiento perceptual                  | Bajo     |
-| E05 | Rejilla de bloques      | Autocorrelación de la envolvente de energía de banda alta buscando periodicidad de 576/1152 muestras (MP3) o 1024/2048 (AAC)       | Estructura de *frames* del códec original sobrevive al decode                                       | Bajo     |
-| E06 | Pre-eco                 | Energía de alta frecuencia inmediatamente anterior a transitorios fuertes, normalizada por el ataque                               | Artefacto característico de MDCT con ventana larga                                                  | Medio    |
-| E07 | Colapso de joint-stereo | Correlación L/R por banda; identidad de canales por encima de una frecuencia de cruce                                              | Intensity stereo del encoder: arriba del cruce los canales se vuelven uno                           | Bajo     |
-| E08 | Piso de ruido y dither  | Nivel y forma del piso en pasajes silenciosos; presencia de silencio digital exacto (todos los bits en 0)                          | Un master real dithered tiene piso; un decode de MP3 tiene silencios matemáticamente limpios        | Medio    |
-| E09 | Bit depth real          | Entropía y distribución de los LSB; cuántos bits bajos son constantes                                                              | Fake hi-res: un «24 bits» cuyos 8 bits bajos no llevan información                                  | Bajo     |
-| E10 | Upsampling              | Energía en la banda entre el Nyquist original sospechado y el declarado (p. ej. nada entre 22,05 y 24 kHz en un archivo de 48 kHz) | Remuestreo cosmético para aparentar calidad                                                         | Bajo     |
-| E11 | Inflado de contenedor   | Bitrate del contenedor frente a entropía real del PCM y frente a E01/E09                                                           | El caso «MP3 128 → WAV 1411 kbps»: el número sube, la información no vuelve                         | Bajo     |
-| E12 | Métricas de calidad     | True peak, muestras consecutivas en fondo de escala, DC offset, LUFS integrado, rango dinámico, correlación estéreo global         | *Informativas*: no entran en la fusión de procedencia, se reportan aparte                           | —        |
-| E13 | Metadata forense        | Cabecera Xing/LAME o tags de encoder residuales, chunks anómalos, extensión que no corresponde al contenedor                       | Rastro documental del paso por un encoder con pérdida                                               | Muy bajo |
-| E14 | Consistencia temporal   | Varianza de E01-E07 entre los 12 tramos de la pista                                                                                | Un corte real es estable en toda la pista; una caída en un solo tramo es contenido, no codificación | —        |
+| ID  | Evidencia               | Cómo se mide                                                                                                                                                                                                                                                                                                                                                                                                                                          | Qué indica                                                                                          | Falso +  |
+|-----|-------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|----------|
+| E01 | Ancho de banda efectivo | **Corregido en v1.1:** frecuencia más alta cuyo nivel suavizado (~200 Hz) sigue por encima de una referencia — el máximo de la banda 1-6 kHz menos ~45 dB, o el piso de ruido del archivo más un margen — exigiendo 3 bins consecutivos. *No* un percentil de energía acumulada: en música real la energía se concentra en los graves y el percentil 99,5 % cae en 2-14 kHz tanto en un master lossless como en su transcode, sin poder discriminante | Contenido ausente muy por debajo de Nyquist                                                         | Alto     |
+| E02 | Pendiente del corte     | dB/octava en la vecindad del corte estimado; brick-wall \> 60 dB/oct frente a roll-off natural \< 18 dB/oct                                                                                                                                                                                                                                                                                                                                           | Filtro de encoder frente a limitación acústica                                                      | Medio    |
+| E03 | Shelf de 16 kHz         | Salto de nivel medio entre las bandas 14-16 kHz y 16-18 kHz sin caída progresiva                                                                                                                                                                                                                                                                                                                                                                      | Firma clásica de LAME y de AAC a bitrate medio                                                      | Medio    |
+| E04 | Huecos espectrales      | Proporción de *bins* con energía nula o por debajo del piso, agrupados en bandas contiguas, de forma consistente entre ventanas                                                                                                                                                                                                                                                                                                                       | **La señal más robusta.** Anulación de coeficientes por enmascaramiento perceptual                  | Bajo     |
+| E05 | Rejilla de bloques      | Autocorrelación de la envolvente de energía de banda alta buscando periodicidad de 576/1152 muestras (MP3) o 1024/2048 (AAC)                                                                                                                                                                                                                                                                                                                          | Estructura de *frames* del códec original sobrevive al decode                                       | Bajo     |
+| E06 | Pre-eco                 | Energía de alta frecuencia inmediatamente anterior a transitorios fuertes, normalizada por el ataque                                                                                                                                                                                                                                                                                                                                                  | Artefacto característico de MDCT con ventana larga                                                  | Medio    |
+| E07 | Colapso de joint-stereo | Correlación L/R por banda; identidad de canales por encima de una frecuencia de cruce                                                                                                                                                                                                                                                                                                                                                                 | Intensity stereo del encoder: arriba del cruce los canales se vuelven uno                           | Bajo     |
+| E08 | Piso de ruido y dither  | Nivel y forma del piso en pasajes silenciosos; presencia de silencio digital exacto (todos los bits en 0)                                                                                                                                                                                                                                                                                                                                             | Un master real dithered tiene piso; un decode de MP3 tiene silencios matemáticamente limpios        | Medio    |
+| E09 | Bit depth real          | Entropía y distribución de los LSB; cuántos bits bajos son constantes                                                                                                                                                                                                                                                                                                                                                                                 | Fake hi-res: un «24 bits» cuyos 8 bits bajos no llevan información                                  | Bajo     |
+| E10 | Upsampling              | Energía en la banda entre el Nyquist original sospechado y el declarado (p. ej. nada entre 22,05 y 24 kHz en un archivo de 48 kHz)                                                                                                                                                                                                                                                                                                                    | Remuestreo cosmético para aparentar calidad                                                         | Bajo     |
+| E11 | Inflado de contenedor   | Bitrate del contenedor frente a entropía real del PCM y frente a E01/E09                                                                                                                                                                                                                                                                                                                                                                              | El caso «MP3 128 → WAV 1411 kbps»: el número sube, la información no vuelve                         | Bajo     |
+| E12 | Métricas de calidad     | True peak, muestras consecutivas en fondo de escala, DC offset, LUFS integrado, rango dinámico, correlación estéreo global                                                                                                                                                                                                                                                                                                                            | *Informativas*: no entran en la fusión de procedencia, se reportan aparte                           | —        |
+| E13 | Metadata forense        | Cabecera Xing/LAME o tags de encoder residuales, chunks anómalos, extensión que no corresponde al contenedor                                                                                                                                                                                                                                                                                                                                          | Rastro documental del paso por un encoder con pérdida                                               | Muy bajo |
+| E14 | Consistencia temporal   | Varianza de E01-E07 entre los 12 tramos de la pista                                                                                                                                                                                                                                                                                                                                                                                                   | Un corte real es estable en toda la pista; una caída en un solo tramo es contenido, no codificación | —        |
 
 Guardas contra falsos positivos
 
@@ -444,9 +440,9 @@ Misma filosofía que Stems Music: el usuario no configura la calidad del anális
 | Reporte             | Exportación CSV / JSON / PDF «Verify Remix» con hash del archivo, veredicto, evidencias y versión del motor, para adjuntar en un reclamo                                                                              | F5   |
 | Espectrograma + A/B | Modos Analyzer y Forensic, comparación de dos archivos lado a lado                                                                                                                                                    | v1.1 |
 
-#### Identidad visual
+#### Identidad visual Decidido
 
-Propongo la paleta BDJ Studio de negro y rojo, coherente con BDJ LATAM, con los cinco colores de veredicto como única familia semántica (verde → oliva → tierra → ámbar → rojo BDJ para el peor estado, de modo que el rojo de marca y el rojo de alarma sean el mismo y no compitan). Search Pro es blanco por decisión explícita tuya; aquí el tema oscuro encaja mejor con una herramienta de análisis y con el resto de la suite. **Esto es una decisión tuya, no mía** — y si hay un diseño de referencia, lo replico pixel a pixel.
+Cian eléctrico `#00F2FE` sobre azul medianoche `#050811`, tomado del logo, con los cinco colores de veredicto como única familia semántica (cian para lossless verificado y `#F43F5E` para probable transcode). Es lo que hay en `core/theme/app_colors.dart` y es una decisión mejor que mi propuesta inicial de negro y rojo: para una herramienta de análisis espectral el cian sobre oscuro es el lenguaje del instrumento, y distingue el producto del blanco de Search Pro sin salirse de la marca.
 
 ## 14. Licenciamiento con BDJ Studio License
 

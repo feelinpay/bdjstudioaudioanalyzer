@@ -24,9 +24,9 @@ pub fn run_dsp_analysis(
     max_peak: f32,
     clipped_samples: u64,
     dc_offset: f64,
-    has_xing_lame: bool,
+    has_lossy_encoder_signature: bool,
     encoder_tag: Option<&str>,
-    has_anomalous_id3: bool,
+    has_dj_metadata: bool,
     is_extension_mismatch: bool,
 ) -> DspOutput {
     let sample_rate = facts.sample_rate;
@@ -83,13 +83,23 @@ pub fn run_dsp_analysis(
         guards.push("Frecuencia de muestreo nativa baja (<= 32 kHz)".to_string());
     }
 
+    // P1 GUARD: Material band-limited de origen (acústico natural, sin agudos pero con roll-off suave)
+    let is_natural_band_limited = spec.effective_bandwidth_hz < 20000
+        && spec.cutoff_slope_db_oct < 24.0;
+
+    if is_natural_band_limited {
+        guards.push("Material acústico con ancho de banda limitado de origen (roll-off suave < 24 dB/oct, sin firmas de compresión digital)".to_string());
+    }
+
     // 4. Construct E01 - E14 Evidences
     let mut evidences = Vec::new();
     let mut strong_evidence_present = false;
 
     // E01: Ancho de banda efectivo
     let e01_hz = spec.effective_bandwidth_hz as f64;
-    let (e01_llr, e01_desc) = if e01_hz <= 16500.0 {
+    let (e01_llr, e01_desc) = if is_natural_band_limited {
+        (0.0, format!("Ancho de banda medido en {} Hz compatible con instrumentación o máster analógico de origen (roll-off suave)", spec.effective_bandwidth_hz))
+    } else if e01_hz <= 16500.0 {
         (2.2, format!("Corte brusco en {} Hz (compatible con MP3 128 kbps)", spec.effective_bandwidth_hz))
     } else if e01_hz <= 18500.0 {
         (1.6, format!("Corte en {} Hz (compatible con MP3 192 kbps)", spec.effective_bandwidth_hz))
@@ -283,15 +293,17 @@ pub fn run_dsp_analysis(
     });
 
     // E13: Metadata forense (FUERTE)
-    let (e13_llr, e13_desc) = if has_xing_lame || encoder_tag.is_some() {
+    let (e13_llr, e13_desc) = if has_lossy_encoder_signature {
         strong_evidence_present = true;
         let tag = encoder_tag.unwrap_or("Xing/LAME");
-        (3.5, format!("Cabecera / firma residual de compresion encontrada en metadata: {}", tag))
+        (3.5, format!("Cabecera / firma residual de compresión MP3/AAC encontrada en metadata: {}", tag))
     } else if is_extension_mismatch {
         strong_evidence_present = true;
-        (3.5, "Discrepancia critica: extension no corresponde al formato binario real".to_string())
-    } else if has_anomalous_id3 {
-        (2.0, "Chunk ID3 anomalo hallado dentro del archivo RIFF/WAV".to_string())
+        (3.5, "Discrepancia crítica: extensión no corresponde al formato binario real".to_string())
+    } else if has_dj_metadata {
+        (0.0, "Metadatos estándar de software DJ presentes (Serato/Rekordbox). Totalmente legítimo.".to_string())
+    } else if let Some(tag) = encoder_tag {
+        (0.0, format!("Metadatos de software de exportación legítimos detectados: {}", tag))
     } else {
         (0.0, "Cabeceras y metadata documental limpias".to_string())
     };

@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// Versión / revisión del motor de análisis y veredicto.
 /// Si cambia, las cachés anteriores se invalidan automáticamente.
@@ -99,11 +99,85 @@ pub struct Evidence {
     pub description: String,
 }
 
+/// Códecs soportados por el motor de análisis y reproducción.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Codec {
+    // Lossless PCM
+    PcmS16Le,
+    PcmS24Le,
+    PcmS32Le,
+    PcmF32Le,
+    PcmS16Be,
+    PcmS24Be,
+    PcmS32Be,
+    PcmF32Be,
+    PcmU8,
+    PcmOther,
+    // Lossless comprimido
+    Flac,
+    Alac,
+    WavPack,
+    // Lossy
+    Mp3,
+    Aac,
+    Vorbis,
+    Opus,
+    Wma,
+    // Desconocido
+    Unknown,
+}
+
+impl Codec {
+    pub fn is_lossless(&self) -> bool {
+        matches!(
+            self,
+            Codec::PcmS16Le
+                | Codec::PcmS24Le
+                | Codec::PcmS32Le
+                | Codec::PcmF32Le
+                | Codec::PcmS16Be
+                | Codec::PcmS24Be
+                | Codec::PcmS32Be
+                | Codec::PcmF32Be
+                | Codec::PcmU8
+                | Codec::PcmOther
+                | Codec::Flac
+                | Codec::Alac
+                | Codec::WavPack
+        )
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Codec::PcmS16Le => "PCM 16-bit LE",
+            Codec::PcmS24Le => "PCM 24-bit LE",
+            Codec::PcmS32Le => "PCM 32-bit LE",
+            Codec::PcmF32Le => "PCM 32-bit Float LE",
+            Codec::PcmS16Be => "PCM 16-bit BE",
+            Codec::PcmS24Be => "PCM 24-bit BE",
+            Codec::PcmS32Be => "PCM 32-bit BE",
+            Codec::PcmF32Be => "PCM 32-bit Float BE",
+            Codec::PcmU8 => "PCM 8-bit",
+            Codec::PcmOther => "PCM",
+            Codec::Flac => "FLAC",
+            Codec::Alac => "ALAC (Apple Lossless)",
+            Codec::WavPack => "WavPack",
+            Codec::Mp3 => "MP3 (MPEG Audio Layer III)",
+            Codec::Aac => "AAC (Advanced Audio Coding)",
+            Codec::Vorbis => "Ogg Vorbis",
+            Codec::Opus => "Opus",
+            Codec::Wma => "WMA",
+            Codec::Unknown => "Códec desconocido",
+        }
+    }
+}
+
 /// Hechos técnicos reales del contenedor y códec (por parseo profundo, nunca extensión).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormatFacts {
     pub container: String,
     pub codec: String,
+    pub codec_type: Codec,
     pub sample_rate: u32,
     pub bit_depth: Option<u16>,
     pub channels: u16,
@@ -140,6 +214,7 @@ pub struct FileReport {
     pub quality: QualityMetrics,
     pub guards_triggered: Vec<String>,
     pub verdict_summary: String,
+    pub average_spectrum_db: Vec<f32>,
 }
 
 /// Información de una unidad de almacenamiento del sistema.

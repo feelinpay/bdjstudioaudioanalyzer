@@ -5,9 +5,10 @@ use std::path::Path;
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ForensicEvidence {
     pub has_xing_lame_header: bool,
+    pub has_lossy_encoder_signature: bool,
     pub encoder_string: Option<String>,
-    pub has_anomalous_id3_in_wav: bool,
     pub is_extension_mismatch: bool,
+    pub has_dj_metadata: bool,
     pub declared_extension: String,
     pub detected_magic_type: String,
     pub descriptions: Vec<String>,
@@ -64,62 +65,74 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
         "UNKNOWN".to_string()
     };
 
-    // Check extension mismatch
+    // Extension mismatch check: Declared lossless container, but actual binary is lossy bitstream
     if (ext == "wav" && !is_riff_wav) || (ext == "flac" && !is_flac) || (ext == "aif" && !is_aiff) || (ext == "aiff" && !is_aiff) {
         if is_mp3_id3 || is_mp3_sync || is_mp4 || is_ogg {
             evidence.is_extension_mismatch = true;
             evidence.descriptions.push(format!(
-                "Extension declarada .{} pero la cabecera real es {}",
+                "Discrepancia crítica de extensión: declarada .{} pero el contenedor binario real es {}",
                 ext, evidence.detected_magic_type
             ));
         }
     }
 
-    // Check anomalous ID3 inside WAV
-    if is_riff_wav {
-        if find_subsequence(&header_buf, b"id3 ") || find_subsequence(&header_buf, b"ID3 ") {
-            evidence.has_anomalous_id3_in_wav = true;
-            evidence.descriptions.push("Chunk ID3 anomalo encontrado dentro del contenedor RIFF/WAV".to_string());
-        }
+    // DJ metadata check: Standard ID3 chunks in WAV (Rekordbox / Serato / Traktor tags)
+    // This is legitimate DJ software metadata, NOT transcode evidence!
+    if is_riff_wav && (find_subsequence(&header_buf, b"id3 ") || find_subsequence(&header_buf, b"ID3 ")) {
+        evidence.has_dj_metadata = true;
+        evidence.descriptions.push("Chunk ID3 de metadatos detectado (legítimo de software DJ: Rekordbox/Serato)".to_string());
     }
 
     // Scan for Xing / Info / LAME headers in header_buf
     if let Some(pos) = find_subsequence_pos(&header_buf, b"Xing").or_else(|| find_subsequence_pos(&header_buf, b"Info")) {
+        // Confirm it is not inside an ID3 text tag but in an audio frame header
         evidence.has_xing_lame_header = true;
-        evidence.descriptions.push("Cabecera Xing/Info residual detectada".to_string());
-        // Look for LAME version tag usually 120 bytes after Xing
+        evidence.has_lossy_encoder_signature = true;
+        evidence.descriptions.push("Cabecera Xing/Info residual de trama MP3 detectada".to_string());
+        // Look for LAME version tag usually 120-160 bytes after Xing
         if header_buf.len() > pos + 128 {
             let slice = &header_buf[pos..pos + 160];
             if let Some(lame_pos) = find_subsequence_pos(slice, b"LAME") {
                 let end = std::cmp::min(lame_pos + 9, slice.len());
                 if let Ok(s) = std::str::from_utf8(&slice[lame_pos..end]) {
                     evidence.encoder_string = Some(s.to_string());
-                    evidence.descriptions.push(format!("Firma de encoder detectada: {}", s));
+                    evidence.descriptions.push(format!("Firma de encoder MP3 residual: {}", s));
                 }
             }
         }
     } else if let Some(pos) = find_subsequence_pos(&header_buf, b"LAME3.") {
         evidence.has_xing_lame_header = true;
+        evidence.has_lossy_encoder_signature = true;
         let end = std::cmp::min(pos + 9, header_buf.len());
         if let Ok(s) = std::str::from_utf8(&header_buf[pos..end]) {
             evidence.encoder_string = Some(s.to_string());
-            evidence.descriptions.push(format!("Firma LAME residual encontrada: {}", s));
+            evidence.descriptions.push(format!("Firma LAME3 residual encontrada: {}", s));
         }
     } else if let Some(pos) = find_subsequence_pos(&header_buf, b"Lavf") {
-        let end = std::cmp::min(pos + 10, header_buf.len());
-        if let Ok(s) = std::str::from_utf8(&header_buf[pos..end]) {
-            evidence.encoder_string = Some(s.to_string());
-            evidence.descriptions.push(format!("Firma Lavf (FFmpeg) encontrada: {}", s));
+        // Lavf is FFmpeg (libavformat). It is standard for DAW exports, conversion scripts and mastering.
+        // It is NOT a lossy signature by itself!
+        let max_len = std::cmp::min(pos + 32, header_buf.len());
+        let slice = &header_buf[pos..max_len];
+        let end_idx = slice
+            .iter()
+            .position(|&b| b == 0 || b < 0x20 || b > 0x7E)
+            .unwrap_or(slice.len());
+        if let Ok(s) = std::str::from_utf8(&slice[..end_idx]) {
+            let s_clean = s.trim().to_string();
+            evidence.encoder_string = Some(s_clean.clone());
+            // Informational only, never accusatory
+            evidence.descriptions.push(format!("Software de exportación: {}", s_clean));
         }
     }
 
-    // Also read last 4KB for trailing tags (e.g. ID3v1 or APE tag or LAME tag at EOF)
+    // Also read last 4KB for trailing tags (e.g. LAME tag at EOF in pseudo-WAV)
     if file_len > 4096 {
         if file.seek(SeekFrom::End(-4096)).is_ok() {
             let mut tail_buf = [0u8; 4096];
             if file.read_exact(&mut tail_buf).is_ok() {
                 if let Some(pos) = find_subsequence_pos(&tail_buf, b"LAME3.") {
                     evidence.has_xing_lame_header = true;
+                    evidence.has_lossy_encoder_signature = true;
                     let end = std::cmp::min(pos + 9, tail_buf.len());
                     if let Ok(s) = std::str::from_utf8(&tail_buf[pos..end]) {
                         if evidence.encoder_string.is_none() {
