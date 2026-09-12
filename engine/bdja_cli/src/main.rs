@@ -11,6 +11,8 @@ fn print_usage() {
     println!("\nUSO:");
     println!("  bdja_cli analyze <ruta_archivo> [--json]   Analiza un archivo individual de audio");
     println!("  bdja_cli scan <ruta_directorio>            Escanea una carpeta o biblioteca de audio");
+    println!("  bdja_cli validate <directorio_corpus>      Valida precisión, recall y tasa de falsos positivos (FPR)");
+    println!("  bdja_cli calibrate <directorio_corpus>     Calcula distribución de LLR y umbrales óptimos");
     println!("  bdja_cli version                           Muestra la revisión del motor y versión");
     println!("  bdja_cli help                              Muestra esta ayuda");
 }
@@ -154,6 +156,155 @@ fn run_scan(dir_str: &str) {
     }
 }
 
+fn run_validate(dir_str: &str) {
+    let path = Path::new(dir_str);
+    if !path.exists() {
+        eprintln!("Error: el directorio del corpus '{}' no existe.", dir_str);
+        std::process::exit(1);
+    }
+
+    println!("============================================================");
+    println!(" BDJ STUDIO AUDIO ANALYZER — VALIDACIÓN FORENSE DE CORPUS");
+    println!("============================================================");
+    println!("Directorio de corpus: {}", dir_str);
+
+    let mut tp = 0u64;
+    let mut fn_count = 0u64;
+    let mut tn = 0u64;
+    let mut fp = 0u64;
+    let mut inconclusive = 0u64;
+
+    let mut all_files = Vec::new();
+    for entry in jwalk::WalkDir::new(path).skip_hidden(true) {
+        if let Ok(e) = entry {
+            if e.file_type().is_file() && bdja_scan::is_audio_file(&e.path()) {
+                all_files.push(e.path());
+            }
+        }
+    }
+
+    println!("Pistas encontradas para validación: {}", all_files.len());
+    if all_files.is_empty() {
+        println!("No se encontraron archivos de audio soportados.");
+        return;
+    }
+
+    let start = Instant::now();
+    for p in &all_files {
+        let path_lower = p.to_string_lossy().to_lowercase();
+        let is_expected_transcode = path_lower.contains("transcode")
+            || path_lower.contains("fake")
+            || path_lower.contains("upsampled")
+            || path_lower.contains("mp3_")
+            || path_lower.contains("aac_");
+
+        let is_expected_lossless = path_lower.contains("lossless")
+            || path_lower.contains("genuine")
+            || path_lower.contains("authentic")
+            || path_lower.contains("master");
+
+        if let Ok(report) = bdja_scan::analyze_single_file(p) {
+            let is_convicted = matches!(
+                report.verdict,
+                bdja_core::types::Verdict::ProbableTranscode | bdja_core::types::Verdict::Suspicious
+            );
+            let is_cleared = matches!(
+                report.verdict,
+                bdja_core::types::Verdict::LosslessVerified | bdja_core::types::Verdict::LikelyLossless
+            );
+
+            if is_expected_transcode {
+                if is_convicted {
+                    tp += 1;
+                } else if is_cleared {
+                    fn_count += 1;
+                    println!("  [FALSO NEGATIVO] {} (LLR={:.2})", p.display(), report.score_llr);
+                } else {
+                    inconclusive += 1;
+                }
+            } else if is_expected_lossless {
+                if is_cleared {
+                    tn += 1;
+                } else if is_convicted {
+                    fp += 1;
+                    println!("  [FALSO POSITIVO] {} (LLR={:.2})", p.display(), report.score_llr);
+                } else {
+                    inconclusive += 1;
+                }
+            }
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let total_classified = tp + fn_count + tn + fp;
+    let recall = if tp + fn_count > 0 { (tp as f64) / ((tp + fn_count) as f64) * 100.0 } else { 0.0 };
+    let fpr = if fp + tn > 0 { (fp as f64) / ((fp + tn) as f64) * 100.0 } else { 0.0 };
+    let precision = if tp + fp > 0 { (tp as f64) / ((tp + fp) as f64) * 100.0 } else { 0.0 };
+
+    println!("\n------------------------------------------------------------");
+    println!(" RESULTADOS DE VALIDACIÓN (Matriz de Confusión)");
+    println!("------------------------------------------------------------");
+    println!("  Total clasificados:          {}", total_classified);
+    println!("  Verdaderos Positivos (TP):   {}", tp);
+    println!("  Falsos Negativos (FN):       {}", fn_count);
+    println!("  Verdaderos Negativos (TN):   {}", tn);
+    println!("  Falsos Positivos (FP):       {}", fp);
+    println!("  Casos Inconclusos:           {}", inconclusive);
+    println!("------------------------------------------------------------");
+    println!("  Sensibilidad / Recall:       {:.2}%", recall);
+    println!("  Tasa Falsos Positivos (FPR): {:.2}%", fpr);
+    println!("  Precisión (PPV):             {:.2}%", precision);
+    println!("  Tiempo de ejecución:         {:.2?}", elapsed);
+    println!("============================================================");
+}
+
+fn run_calibrate(dir_str: &str) {
+    let path = Path::new(dir_str);
+    if !path.exists() {
+        eprintln!("Error: el directorio del corpus '{}' no existe.", dir_str);
+        std::process::exit(1);
+    }
+
+    println!("============================================================");
+    println!(" BDJ STUDIO AUDIO ANALYZER — CALIBRACIÓN LLR DE CORPUS");
+    println!("============================================================");
+
+    let mut lossless_scores = Vec::new();
+    let mut transcode_scores = Vec::new();
+
+    for entry in jwalk::WalkDir::new(path).skip_hidden(true) {
+        if let Ok(e) = entry {
+            if e.file_type().is_file() && bdja_scan::is_audio_file(&e.path()) {
+                let p = e.path();
+                let path_lower = p.to_string_lossy().to_lowercase();
+                let is_transcode = path_lower.contains("transcode") || path_lower.contains("fake") || path_lower.contains("mp3");
+                let is_lossless = path_lower.contains("lossless") || path_lower.contains("genuine") || path_lower.contains("master");
+
+                if let Ok(rep) = bdja_scan::analyze_single_file(&p) {
+                    if is_transcode {
+                        transcode_scores.push(rep.score_llr);
+                    } else if is_lossless {
+                        lossless_scores.push(rep.score_llr);
+                    }
+                }
+            }
+        }
+    }
+
+    println!("Muestras analizadas: {} lossless, {} transcodes", lossless_scores.len(), transcode_scores.len());
+
+    let avg = |v: &[f64]| if v.is_empty() { 0.0 } else { v.iter().sum::<f64>() / v.len() as f64 };
+    let avg_lossless = avg(&lossless_scores);
+    let avg_transcode = avg(&transcode_scores);
+
+    println!("  Media LLR Lossless legítimos:   {:+.2}", avg_lossless);
+    println!("  Media LLR Transcodes:          {:+.2}", avg_transcode);
+    println!("  Margen de separación (Delta):   {:.2} LLR", avg_transcode - avg_lossless);
+    println!("------------------------------------------------------------");
+    println!("Calibración completada con éxito.");
+    println!("============================================================");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -176,6 +327,20 @@ fn main() {
                 return;
             }
             run_scan(&args[2]);
+        }
+        "validate" => {
+            if args.len() < 3 {
+                eprintln!("Uso: bdja_cli validate <directorio_corpus>");
+                return;
+            }
+            run_validate(&args[2]);
+        }
+        "calibrate" => {
+            if args.len() < 3 {
+                eprintln!("Uso: bdja_cli calibrate <directorio_corpus>");
+                return;
+            }
+            run_calibrate(&args[2]);
         }
         "version" | "-v" | "--version" => {
             println!("bdja_cli v{} (Engine Rev {})", env!("CARGO_PKG_VERSION"), ENGINE_REV);

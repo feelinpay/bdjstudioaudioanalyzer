@@ -4,9 +4,16 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use parking_lot::{Mutex, RwLock};
 use bdja_core::types::FileReport;
+pub use bdja_core::types::ENGINE_REV;
 use bdja_store::ReportStore;
 
-pub const ENGINE_REV: u32 = 1;
+#[derive(Debug, Clone, PartialEq)]
+pub struct DuplicateGroupFfi {
+    pub blake3_hash: String,
+    pub count: u64,
+    pub file_size: u64,
+    pub reports: Vec<FileReportFfi>,
+}
 
 static INITIALIZED: RwLock<bool> = RwLock::new(false);
 static DATA_DIR: RwLock<Option<String>> = RwLock::new(None);
@@ -485,28 +492,55 @@ pub fn query_saved_reports(
         .collect())
 }
 
-/// Exporta los reportes guardados a archivo CSV.
+/// Cuenta el total de reportes que coinciden con los filtros.
+pub fn count_saved_reports(
+    verdict_filter: Option<String>,
+    search: Option<String>,
+) -> Result<u64, String> {
+    let store_lock = STORE.read();
+    let store = store_lock.as_ref().ok_or("Base de datos no disponible")?;
+
+    store
+        .count_reports(verdict_filter.as_deref(), search.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Encuentra grupos de pistas duplicadas agrupadas por su hash BLAKE3.
+pub fn query_duplicate_groups(limit_groups: u32) -> Result<Vec<DuplicateGroupFfi>, String> {
+    let store_lock = STORE.read();
+    let store = store_lock.as_ref().ok_or("Base de datos no disponible")?;
+
+    let groups = store
+        .find_duplicates(limit_groups as usize)
+        .map_err(|e| e.to_string())?;
+
+    Ok(groups
+        .into_iter()
+        .map(|g| DuplicateGroupFfi {
+            blake3_hash: g.blake3_hash,
+            count: g.count as u64,
+            file_size: g.file_size,
+            reports: g.reports.into_iter().map(map_report_to_ffi).collect(),
+        })
+        .collect())
+}
+
+/// Exporta los reportes guardados a archivo CSV de forma paginada y eficiente.
 pub fn export_reports_csv(out_path: String) -> Result<bool, String> {
     let store_lock = STORE.read();
     let store = store_lock.as_ref().ok_or("Base de datos no disponible")?;
-    let reports = store
-        .list_reports(None, None, 100000, 0)
-        .map_err(|e| e.to_string())?;
 
-    bdja_store::export_to_csv(&reports, Path::new(&out_path))
+    bdja_store::export_store_to_csv(store, Path::new(&out_path))
         .map_err(|e| format!("Error al exportar CSV: {}", e))?;
     Ok(true)
 }
 
-/// Exporta los reportes guardados a archivo JSON.
+/// Exporta los reportes guardados a archivo JSON de forma paginada y eficiente.
 pub fn export_reports_json(out_path: String) -> Result<bool, String> {
     let store_lock = STORE.read();
     let store = store_lock.as_ref().ok_or("Base de datos no disponible")?;
-    let reports = store
-        .list_reports(None, None, 100000, 0)
-        .map_err(|e| e.to_string())?;
 
-    bdja_store::export_to_json(&reports, Path::new(&out_path))
+    bdja_store::export_store_to_json(store, Path::new(&out_path))
         .map_err(|e| format!("Error al exportar JSON: {}", e))?;
     Ok(true)
 }

@@ -33,8 +33,10 @@ where
     F: Fn(FileReport) + Send + Sync,
     P: Fn(u64, u64, String) + Send + Sync,
 {
-    // 1. Fast Directory Walk & discovery
+    // 1. Fast Directory Walk & discovery with real-time feedback
     let mut discovered: Vec<PathBuf> = Vec::new();
+    let mut discovery_report_ticker = 0usize;
+
     for root in roots {
         if cancel_token.load(Ordering::Relaxed) {
             return Ok(0);
@@ -55,7 +57,13 @@ where
             }
             if let Ok(e) = entry {
                 if e.file_type().is_file() && is_audio_file(&e.path()) {
-                    discovered.push(e.path());
+                    let p = e.path();
+                    discovered.push(p.clone());
+                    discovery_report_ticker += 1;
+                    if discovery_report_ticker >= 50 {
+                        discovery_report_ticker = 0;
+                        on_progress(0, discovered.len() as u64, format!("Descubriendo: {}", p.to_string_lossy()));
+                    }
                 }
             }
         }
@@ -80,7 +88,7 @@ where
 
     let analyzed_counter = Arc::new(AtomicU64::new(0));
 
-    // 3. Parallel analysis with SQLite cache hit bypass
+    // 3. Parallel analysis with SQLite cache hit and hash deduplication bypass
     pool.install(|| {
         discovered.par_iter().for_each(|path| {
             if cancel_token.load(Ordering::Relaxed) {
@@ -91,23 +99,44 @@ where
             let count = analyzed_counter.fetch_add(1, Ordering::Relaxed) + 1;
             on_progress(count, total, path_str.clone());
 
+            let meta_opt = std::fs::metadata(path).ok();
+            let file_size = meta_opt.as_ref().map(|m| m.len()).unwrap_or(0);
+            let mtime_utc = meta_opt
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+
             // Check SQLite cache with path, size, mtime, and engine_rev
             let cached_report = if !skip_cache {
                 if let Some(ref st) = store {
-                    if let Ok(meta) = std::fs::metadata(path) {
-                        let mtime_utc = meta
-                            .modified()
-                            .ok()
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs() as i64)
-                            .unwrap_or(0);
-
-                        match st.get_cached_report(&path_str, meta.len(), mtime_utc, ENGINE_REV) {
-                            Ok(Some(rep)) => Some(rep),
-                            _ => None,
+                    match st.get_cached_report(&path_str, file_size, mtime_utc, ENGINE_REV) {
+                        Ok(Some(rep)) => Some(rep),
+                        _ => {
+                            // Deduplication by quick hash: check first 64 KB BLAKE3
+                            if let Ok(mut file) = std::fs::File::open(path) {
+                                let mut buffer = [0u8; 65536];
+                                let n = std::io::Read::read(&mut file, &mut buffer).unwrap_or(0);
+                                if n > 0 {
+                                    let hash = blake3::hash(&buffer[..n]).to_hex().to_string();
+                                    match st.get_cached_by_hash(&hash, ENGINE_REV) {
+                                        Ok(Some(mut match_rep)) => {
+                                            // Reutilizar resultado para copia en distinta ruta
+                                            match_rep.path = path_str.clone();
+                                            match_rep.file_size = file_size;
+                                            let _ = st.save_report(&match_rep);
+                                            Some(match_rep)
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
                         }
-                    } else {
-                        None
                     }
                 } else {
                     None
@@ -144,51 +173,4 @@ where
     });
 
     Ok(analyzed_counter.load(Ordering::Relaxed))
-}
-
-pub fn scan_directory<F, P>(
-    root: &Path,
-    cancel_token: Arc<AtomicBool>,
-    mut on_file_analyzed: F,
-    mut on_progress: P,
-) -> Result<u64, String>
-where
-    F: FnMut(FileReport),
-    P: FnMut(u64, u64, String),
-{
-    let mut found_files: Vec<PathBuf> = Vec::new();
-
-    for entry in WalkDir::new(root).skip_hidden(true) {
-        if cancel_token.load(Ordering::Relaxed) {
-            return Ok(found_files.len() as u64);
-        }
-        if let Ok(entry) = entry {
-            if entry.file_type().is_file() {
-                let path = entry.path();
-                if is_audio_file(&path) {
-                    found_files.push(path);
-                }
-            }
-        }
-    }
-
-    let total = found_files.len() as u64;
-    let mut analyzed_count = 0u64;
-
-    for path in found_files {
-        if cancel_token.load(Ordering::Relaxed) {
-            break;
-        }
-
-        let path_display = path.to_string_lossy().to_string();
-        on_progress(analyzed_count, total, path_display);
-
-        if let Ok(report) = analyze_single_file(&path) {
-            on_file_analyzed(report);
-        }
-
-        analyzed_count += 1;
-    }
-
-    Ok(analyzed_count)
 }

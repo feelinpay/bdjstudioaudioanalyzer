@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `map_report_to_ffi`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ScanJob`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Devuelve la revision del motor nativo.
 int engineRevision() => RustLib.instance.api.crateApiEngineRevision();
@@ -83,16 +83,60 @@ Future<List<FileReportFfi>> querySavedReports({
   offset: offset,
 );
 
-/// Exporta los reportes guardados a archivo CSV.
+/// Cuenta el total de reportes que coinciden con los filtros.
+Future<BigInt> countSavedReports({String? verdictFilter, String? search}) =>
+    RustLib.instance.api.crateApiCountSavedReports(
+      verdictFilter: verdictFilter,
+      search: search,
+    );
+
+/// Encuentra grupos de pistas duplicadas agrupadas por su hash BLAKE3.
+Future<List<DuplicateGroupFfi>> queryDuplicateGroups({
+  required int limitGroups,
+}) =>
+    RustLib.instance.api.crateApiQueryDuplicateGroups(limitGroups: limitGroups);
+
+/// Exporta los reportes guardados a archivo CSV de forma paginada y eficiente.
 Future<bool> exportReportsCsv({required String outPath}) =>
     RustLib.instance.api.crateApiExportReportsCsv(outPath: outPath);
 
-/// Exporta los reportes guardados a archivo JSON.
+/// Exporta los reportes guardados a archivo JSON de forma paginada y eficiente.
 Future<bool> exportReportsJson({required String outPath}) =>
     RustLib.instance.api.crateApiExportReportsJson(outPath: outPath);
 
 /// Diagnostico interno del motor nativo.
 Future<String> diagnostics() => RustLib.instance.api.crateApiDiagnostics();
+
+class DuplicateGroupFfi {
+  final String blake3Hash;
+  final BigInt count;
+  final BigInt fileSize;
+  final List<FileReportFfi> reports;
+
+  const DuplicateGroupFfi({
+    required this.blake3Hash,
+    required this.count,
+    required this.fileSize,
+    required this.reports,
+  });
+
+  @override
+  int get hashCode =>
+      blake3Hash.hashCode ^
+      count.hashCode ^
+      fileSize.hashCode ^
+      reports.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DuplicateGroupFfi &&
+          runtimeType == other.runtimeType &&
+          blake3Hash == other.blake3Hash &&
+          count == other.count &&
+          fileSize == other.fileSize &&
+          reports == other.reports;
+}
 
 class EngineInfoFfi {
   final int revision;

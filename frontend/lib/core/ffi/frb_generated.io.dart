@@ -37,6 +37,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
+  DuplicateGroupFfi dco_decode_duplicate_group_ffi(dynamic raw);
+
+  @protected
   EngineInfoFfi dco_decode_engine_info_ffi(dynamic raw);
 
   @protected
@@ -59,6 +62,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<DuplicateGroupFfi> dco_decode_list_duplicate_group_ffi(dynamic raw);
 
   @protected
   List<EvidenceFfi> dco_decode_list_evidence_ffi(dynamic raw);
@@ -127,6 +133,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
+  DuplicateGroupFfi sse_decode_duplicate_group_ffi(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   EngineInfoFfi sse_decode_engine_info_ffi(SseDeserializer deserializer);
 
   @protected
@@ -149,6 +160,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<DuplicateGroupFfi> sse_decode_list_duplicate_group_ffi(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<EvidenceFfi> sse_decode_list_evidence_ffi(SseDeserializer deserializer);
@@ -226,6 +242,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_duplicate_group_ffi(
+    DuplicateGroupFfi self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_engine_info_ffi(EngineInfoFfi self, SseSerializer serializer);
 
   @protected
@@ -251,6 +273,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_duplicate_group_ffi(
+    List<DuplicateGroupFfi> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_evidence_ffi(

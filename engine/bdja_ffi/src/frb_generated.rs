@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -663487758;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2084738051;
 
 // Section: executor
 
@@ -205,6 +205,41 @@ fn wire__crate__api__cancel_scan_job_impl(
             move |context| {
                 transform_result_sse::<_, ()>((move || {
                     let output_ok = Ok::<_, ()>(crate::api::cancel_scan_job(api_job_id))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__count_saved_reports_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "count_saved_reports",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_verdict_filter = <Option<String>>::sse_decode(&mut deserializer);
+            let api_search = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok =
+                        crate::api::count_saved_reports(api_verdict_filter, api_search)?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -437,6 +472,39 @@ fn wire__crate__api__poll_scan_job_impl(
         },
     )
 }
+fn wire__crate__api__query_duplicate_groups_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "query_duplicate_groups",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_limit_groups = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::query_duplicate_groups(api_limit_groups)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__query_saved_reports_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -566,6 +634,22 @@ impl SseDecode for bool {
     }
 }
 
+impl SseDecode for crate::api::DuplicateGroupFfi {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_blake3Hash = <String>::sse_decode(deserializer);
+        let mut var_count = <u64>::sse_decode(deserializer);
+        let mut var_fileSize = <u64>::sse_decode(deserializer);
+        let mut var_reports = <Vec<crate::api::FileReportFfi>>::sse_decode(deserializer);
+        return crate::api::DuplicateGroupFfi {
+            blake3_hash: var_blake3Hash,
+            count: var_count,
+            file_size: var_fileSize,
+            reports: var_reports,
+        };
+    }
+}
+
 impl SseDecode for crate::api::EngineInfoFfi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -690,6 +774,18 @@ impl SseDecode for Vec<String> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<String>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::DuplicateGroupFfi> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::DuplicateGroupFfi>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -919,15 +1015,17 @@ fn pde_ffi_dispatcher_primary_impl(
         3 => wire__crate__api__analyze_file_quick_impl(port, ptr, rust_vec_len, data_len),
         4 => wire__crate__api__cancel_all_scans_impl(port, ptr, rust_vec_len, data_len),
         5 => wire__crate__api__cancel_scan_job_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__diagnostics_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__engine_init_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__export_reports_csv_impl(port, ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__export_reports_json_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__list_system_volumes_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__poll_scan_job_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__query_saved_reports_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__scan_directory_audio_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__start_scan_job_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__count_saved_reports_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__diagnostics_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__engine_init_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__export_reports_csv_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__export_reports_json_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__list_system_volumes_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__poll_scan_job_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__query_duplicate_groups_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__query_saved_reports_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__scan_directory_audio_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__start_scan_job_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -940,13 +1038,33 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        8 => wire__crate__api__engine_revision_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__engine_revision_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
 
 // Section: rust2dart
 
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::DuplicateGroupFfi {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.blake3_hash.into_into_dart().into_dart(),
+            self.count.into_into_dart().into_dart(),
+            self.file_size.into_into_dart().into_dart(),
+            self.reports.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::DuplicateGroupFfi {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::DuplicateGroupFfi>
+    for crate::api::DuplicateGroupFfi
+{
+    fn into_into_dart(self) -> crate::api::DuplicateGroupFfi {
+        self
+    }
+}
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::EngineInfoFfi {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
@@ -1117,6 +1235,16 @@ impl SseEncode for bool {
     }
 }
 
+impl SseEncode for crate::api::DuplicateGroupFfi {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.blake3_hash, serializer);
+        <u64>::sse_encode(self.count, serializer);
+        <u64>::sse_encode(self.file_size, serializer);
+        <Vec<crate::api::FileReportFfi>>::sse_encode(self.reports, serializer);
+    }
+}
+
 impl SseEncode for crate::api::EngineInfoFfi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1200,6 +1328,16 @@ impl SseEncode for Vec<String> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <String>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::DuplicateGroupFfi> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::DuplicateGroupFfi>::sse_encode(item, serializer);
         }
     }
 }

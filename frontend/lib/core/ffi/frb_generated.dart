@@ -67,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -663487758;
+  int get rustContentHash => 2084738051;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -91,6 +91,11 @@ abstract class RustLibApi extends BaseApi {
 
   Future<bool> crateApiCancelScanJob({required PlatformInt64 jobId});
 
+  Future<BigInt> crateApiCountSavedReports({
+    String? verdictFilter,
+    String? search,
+  });
+
   Future<String> crateApiDiagnostics();
 
   Future<EngineInfoFfi> crateApiEngineInit({
@@ -107,6 +112,10 @@ abstract class RustLibApi extends BaseApi {
   Future<List<VolumeInfoFfi>> crateApiListSystemVolumes();
 
   Future<ScanJobStatusFfi> crateApiPollScanJob({required PlatformInt64 jobId});
+
+  Future<List<DuplicateGroupFfi>> crateApiQueryDuplicateGroups({
+    required int limitGroups,
+  });
 
   Future<List<FileReportFfi>> crateApiQuerySavedReports({
     String? verdictFilter,
@@ -277,6 +286,40 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "cancel_scan_job", argNames: ["jobId"]);
 
   @override
+  Future<BigInt> crateApiCountSavedReports({
+    String? verdictFilter,
+    String? search,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_opt_String(verdictFilter, serializer);
+          sse_encode_opt_String(search, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_64,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiCountSavedReportsConstMeta,
+        argValues: [verdictFilter, search],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiCountSavedReportsConstMeta => const TaskConstMeta(
+    debugName: "count_saved_reports",
+    argNames: ["verdictFilter", "search"],
+  );
+
+  @override
   Future<String> crateApiDiagnostics() {
     return handler.executeNormal(
       NormalTask(
@@ -285,7 +328,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 7,
             port: port_,
           );
         },
@@ -317,7 +360,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 8,
             port: port_,
           );
         },
@@ -343,7 +386,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_u_32,
@@ -369,7 +412,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 10,
             port: port_,
           );
         },
@@ -399,7 +442,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 11,
             port: port_,
           );
         },
@@ -428,7 +471,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 12,
             port: port_,
           );
         },
@@ -456,7 +499,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 13,
             port: port_,
           );
         },
@@ -473,6 +516,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiPollScanJobConstMeta =>
       const TaskConstMeta(debugName: "poll_scan_job", argNames: ["jobId"]);
+
+  @override
+  Future<List<DuplicateGroupFfi>> crateApiQueryDuplicateGroups({
+    required int limitGroups,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(limitGroups, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_duplicate_group_ffi,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiQueryDuplicateGroupsConstMeta,
+        argValues: [limitGroups],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiQueryDuplicateGroupsConstMeta =>
+      const TaskConstMeta(
+        debugName: "query_duplicate_groups",
+        argNames: ["limitGroups"],
+      );
 
   @override
   Future<List<FileReportFfi>> crateApiQuerySavedReports({
@@ -492,7 +568,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 15,
             port: port_,
           );
         },
@@ -526,7 +602,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 16,
             port: port_,
           );
         },
@@ -562,7 +638,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 17,
             port: port_,
           );
         },
@@ -610,6 +686,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   int dco_decode_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
+  }
+
+  @protected
+  DuplicateGroupFfi dco_decode_duplicate_group_ffi(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return DuplicateGroupFfi(
+      blake3Hash: dco_decode_String(arr[0]),
+      count: dco_decode_u_64(arr[1]),
+      fileSize: dco_decode_u_64(arr[2]),
+      reports: dco_decode_list_file_report_ffi(arr[3]),
+    );
   }
 
   @protected
@@ -706,6 +796,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<String> dco_decode_list_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_String).toList();
+  }
+
+  @protected
+  List<DuplicateGroupFfi> dco_decode_list_duplicate_group_ffi(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_duplicate_group_ffi).toList();
   }
 
   @protected
@@ -875,6 +971,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DuplicateGroupFfi sse_decode_duplicate_group_ffi(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_blake3Hash = sse_decode_String(deserializer);
+    var var_count = sse_decode_u_64(deserializer);
+    var var_fileSize = sse_decode_u_64(deserializer);
+    var var_reports = sse_decode_list_file_report_ffi(deserializer);
+    return DuplicateGroupFfi(
+      blake3Hash: var_blake3Hash,
+      count: var_count,
+      fileSize: var_fileSize,
+      reports: var_reports,
+    );
+  }
+
+  @protected
   EngineInfoFfi sse_decode_engine_info_ffi(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_revision = sse_decode_u_32(deserializer);
@@ -996,6 +1109,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <String>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<DuplicateGroupFfi> sse_decode_list_duplicate_group_ffi(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <DuplicateGroupFfi>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_duplicate_group_ffi(deserializer));
     }
     return ans_;
   }
@@ -1231,6 +1358,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_duplicate_group_ffi(
+    DuplicateGroupFfi self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.blake3Hash, serializer);
+    sse_encode_u_64(self.count, serializer);
+    sse_encode_u_64(self.fileSize, serializer);
+    sse_encode_list_file_report_ffi(self.reports, serializer);
+  }
+
+  @protected
   void sse_encode_engine_info_ffi(
     EngineInfoFfi self,
     SseSerializer serializer,
@@ -1315,6 +1454,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_String(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_duplicate_group_ffi(
+    List<DuplicateGroupFfi> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_duplicate_group_ffi(item, serializer);
     }
   }
 

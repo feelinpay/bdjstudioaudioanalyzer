@@ -39,19 +39,17 @@ if (-not $SkipCodegen) {
 Write-Host '== 2/3 Compilando el engine en release =='
 Push-Location $Engine
 try {
-    & cargo build --release -p bdja_ffi -p bdja_worker -p bdja_cli
+    & cargo build --release -p bdja_ffi -p bdja_cli
     if ($LASTEXITCODE -ne 0) { throw "cargo build fallo (exit $LASTEXITCODE)" }
 }
 finally { Pop-Location }
 
 # 3. Copia de DLL y binarios
-Write-Host '== 3/3 Copiando bdja_ffi.dll y workers a Debug y Release =='
-Get-Process bdja_worker -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 300
+Write-Host '== 3/3 Copiando bdja_ffi.dll y artefactos a Debug y Release =='
+Start-Sleep -Milliseconds 200
 
 $artifacts = @(
     (Join-Path $Engine 'target\release\bdja_ffi.dll'),
-    (Join-Path $Engine 'target\release\bdja_worker.exe'),
     (Join-Path $Engine 'target\release\bdja_cli.exe'),
     (Join-Path $Root 'logo.png')
 )

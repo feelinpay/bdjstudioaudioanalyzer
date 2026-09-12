@@ -13,3 +13,4 @@ bdja_verdict = { path = "../bdja_verdict" }
 bdja_scan = { path = "../bdja_scan" }
 bdja_store = { path = "../bdja_store" }
 serde_json = "1.0"
+jwalk = "0.8"

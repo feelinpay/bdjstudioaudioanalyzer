@@ -7,8 +7,6 @@ members = [
     "bdja_verdict",
     "bdja_scan",
     "bdja_store",
-    "bdja_worker",
-    "bdja_ipc",
     "bdja_ffi",
     "bdja_cli",
 ]
