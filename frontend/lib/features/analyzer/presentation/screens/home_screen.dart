@@ -43,7 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isDragging = false;
   String _selectedFilter = 'ALL';
   String _searchQuery = '';
-  String _throttleMode = 'turbo';
+  String _throttleMode = 'normal';
 
   @override
   void initState() {

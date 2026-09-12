@@ -84,7 +84,7 @@ pub fn run_dsp_analysis(
     }
 
     // P1 GUARD: Material band-limited de origen (acústico natural, sin agudos pero con roll-off suave)
-    let is_natural_band_limited = spec.effective_bandwidth_hz < 20000
+    let is_natural_band_limited = spec.cutoff_kind == bdja_core::types::CutoffKind::NaturalRolloff
         && spec.cutoff_slope_db_oct < 24.0;
 
     if is_natural_band_limited {
@@ -95,43 +95,63 @@ pub fn run_dsp_analysis(
     let mut evidences = Vec::new();
     let mut strong_evidence_present = false;
 
-    // E01: Ancho de banda efectivo
-    let e01_hz = spec.effective_bandwidth_hz as f64;
-    let (e01_llr, e01_desc) = if is_natural_band_limited {
-        (0.0, format!("Ancho de banda medido en {} Hz compatible con instrumentación o máster analógico de origen (roll-off suave)", spec.effective_bandwidth_hz))
-    } else if e01_hz <= 16500.0 {
-        (2.2, format!("Corte brusco en {} Hz (compatible con MP3 128 kbps)", spec.effective_bandwidth_hz))
-    } else if e01_hz <= 18500.0 {
-        (1.6, format!("Corte en {} Hz (compatible con MP3 192 kbps)", spec.effective_bandwidth_hz))
-    } else if e01_hz <= 19800.0 {
-        (1.0, format!("Corte en {} Hz (compatible con MP3 256/320 kbps)", spec.effective_bandwidth_hz))
-    } else if e01_hz >= 20500.0 {
-        (-1.8, format!("Espectro completo hasta {} Hz sin corte artificial", spec.effective_bandwidth_hz))
-    } else {
-        (0.0, format!("Ancho de banda medido: {} Hz", spec.effective_bandwidth_hz))
+    // E01: Ancho de banda efectivo y corte artificial (§02 v3.0)
+    let nyquist = facts.sample_rate as f64 / 2.0;
+    let e01_hz = spec.cutoff_frequency_hz.unwrap_or(spec.effective_bandwidth_hz) as f64;
+    let (e01_llr, e01_desc, e01_val) = match spec.cutoff_kind {
+        bdja_core::types::CutoffKind::BrickwallCutoff => {
+            let cutoff_hz = e01_hz;
+            let ratio = cutoff_hz / nyquist;
+
+            let (llr, desc) = if ratio <= 0.76 {
+                // <= 16.7 kHz en 44.1k (compatible con MP3 128 kbps)
+                (2.2, format!("Corte brick-wall abrupto en {} Hz (compatible con MP3 128 kbps)", cutoff_hz as u32))
+            } else if ratio <= 0.86 {
+                // <= 19.0 kHz en 44.1k (compatible con MP3 192 kbps)
+                (1.6, format!("Corte brick-wall en {} Hz (compatible con MP3 192 kbps)", cutoff_hz as u32))
+            } else if ratio <= 0.96 {
+                // <= 21.1 kHz en 44.1k (compatible con MP3 256/320 kbps)
+                (1.2, format!("Corte brick-wall en {} Hz (compatible con MP3 256/320 kbps)", cutoff_hz as u32))
+            } else {
+                (0.8, format!("Corte de alta frecuencia en {} Hz con caída abrupta", cutoff_hz as u32))
+            };
+            (llr, desc, Some(cutoff_hz))
+        }
+        bdja_core::types::CutoffKind::FullSpectrum => {
+            (-1.8, format!("Espectro completo hasta {} Hz sin corte artificial", spec.effective_bandwidth_hz), Some(spec.effective_bandwidth_hz as f64))
+        }
+        bdja_core::types::CutoffKind::NaturalRolloff => {
+            (0.0, format!("Decaimiento acústico natural sin corte artificial (ancho de banda útil: {} Hz)", spec.content_bandwidth_hz), Some(spec.content_bandwidth_hz as f64))
+        }
     };
+
     evidences.push(Evidence {
         code: EvidenceCode::E01,
-        value: Some(e01_hz),
+        value: e01_val,
         llr: e01_llr,
         applicable: true,
         description: e01_desc,
     });
 
-    // E02: Pendiente del corte
+    // E02: Pendiente del corte (§02 v3.0: siempre aplicable ante BrickwallCutoff o NaturalRolloff)
     let e02_val = spec.cutoff_slope_db_oct;
-    let (e02_llr, e02_desc) = if e02_val >= 60.0 {
-        (1.5, format!("Pendiente vertical brick-wall de {:.1} dB/oct (filtro digital de encoder)", e02_val))
-    } else if e02_val < 24.0 {
-        (-1.2, format!("Roll-off suave de {:.1} dB/oct compatible con acustica natural", e02_val))
-    } else {
-        (0.4, format!("Pendiente de corte intermedia: {:.1} dB/oct", e02_val))
+    let (e02_llr, e02_desc, e02_app) = match spec.cutoff_kind {
+        bdja_core::types::CutoffKind::BrickwallCutoff => {
+            let llr = if e02_val >= 60.0 { 1.5 } else { 0.8 };
+            (llr, format!("Pendiente vertical brick-wall de {:.1} dB/oct (filtro digital de encoder)", e02_val), true)
+        }
+        bdja_core::types::CutoffKind::NaturalRolloff => {
+            (-1.0, format!("Roll-off suave de {:.1} dB/oct compatible con acústica natural", e02_val), true)
+        }
+        bdja_core::types::CutoffKind::FullSpectrum => {
+            (0.0, "Espectro plano hasta Nyquist sin pendiente de corte".to_string(), false)
+        }
     };
     evidences.push(Evidence {
         code: EvidenceCode::E02,
-        value: Some(e02_val),
+        value: if e02_app { Some(e02_val) } else { None },
         llr: e02_llr,
-        applicable: e01_hz < 20500.0,
+        applicable: e02_app,
         description: e02_desc,
     });
 

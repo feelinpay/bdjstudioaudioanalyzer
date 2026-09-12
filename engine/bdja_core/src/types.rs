@@ -99,6 +99,17 @@ pub struct Evidence {
     pub description: String,
 }
 
+/// Naturaleza del corte o límite espectral detectado por el motor DSP (§02 v3.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CutoffKind {
+    /// Corte abrupto artificial por filtro digital brickwall (típico de códecs lossy como MP3/AAC)
+    BrickwallCutoff,
+    /// Espectro completo real hasta Nyquist sin corte artificial
+    FullSpectrum,
+    /// Decaimiento acústico natural suave compatible con instrumentación o máster analógico
+    NaturalRolloff,
+}
+
 /// Códecs soportados por el motor de análisis y reproducción.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Codec {

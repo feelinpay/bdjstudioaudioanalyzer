@@ -1,4 +1,9 @@
+use bdja_core::types::CutoffKind;
+
 pub struct SpectrumAnalysis {
+    pub cutoff_kind: CutoffKind,
+    pub cutoff_frequency_hz: Option<u32>,
+    pub content_bandwidth_hz: u32,
     pub effective_bandwidth_hz: u32,
     pub cutoff_slope_db_oct: f64,
     pub shelf_16k_drop_db: f64,
@@ -13,6 +18,9 @@ pub fn analyze_spectrum(
 ) -> SpectrumAnalysis {
     if power_spectra.is_empty() {
         return SpectrumAnalysis {
+            cutoff_kind: CutoffKind::FullSpectrum,
+            cutoff_frequency_hz: None,
+            content_bandwidth_hz: sample_rate / 2,
             effective_bandwidth_hz: sample_rate / 2,
             cutoff_slope_db_oct: 0.0,
             shelf_16k_drop_db: 0.0,
@@ -61,16 +69,17 @@ pub fn analyze_spectrum(
         .cloned()
         .fold(f64::NEG_INFINITY, f64::max);
 
-    // P0-2 FIX & AUDIT v2.0: Detector de borde por ventana diferencial (E01)
+    // P0-2 & AUDIT v3.0: Detector de borde por ventana diferencial (E01)
     // Busca caídas abruptas (brickwall filter típico de códecs lossy) entre ventanas contiguas de ~1.200 Hz
     let step_hz = 1200.0;
     let win_bins = ((step_hz / bin_hz).round() as usize).max(8);
-    let bin_8k = ((8000.0 / bin_hz) as usize).clamp(win_bins, n_bins - 1);
-    let bin_nyquist_margin = (((nyquist - 600.0) / bin_hz) as usize).clamp(bin_8k, n_bins - 1);
+    // Escaneo proporcional desde el 36% de Nyquist (~8 kHz a 44.1k) hasta Nyquist - 400 Hz
+    let bin_8k = ((nyquist * 0.36 / bin_hz) as usize).clamp(win_bins, n_bins - 1);
+    let bin_nyquist_margin = (((nyquist - 400.0) / bin_hz) as usize).clamp(bin_8k, n_bins - 1);
 
     let mut detected_cliff: Option<(usize, f64, f64)> = None; // (cutoff_bin, drop, slope)
 
-    // Barrido buscando escalón digital (brickwall) entre 8 kHz y Nyquist - 600 Hz
+    // Barrido buscando escalón digital (brickwall)
     let step_stride = (win_bins / 4).max(1);
     for b in (bin_8k..=bin_nyquist_margin).step_by(step_stride) {
         let b_start = b.saturating_sub(win_bins);
@@ -86,16 +95,16 @@ pub fn analyze_spectrum(
             let db_after = 10.0 * (p_after + 1e-12).log10();
             let drop = db_before - db_after;
 
-            // Condición de corte digital:
-            // 1. Hay energía acústica real antes del corte (por encima del umbral de silencio)
+            // Condición de corte digital (§03 v3.0):
+            // 1. Umbral relajado a (ref_level - 70.0).max(-85.0) para no perder mezclas oscuras (-12 a -15 dB/oct)
             // 2. Caída abrupta >= 20 dB en sólo 1.200 Hz (equivalente a > 50 dB/octava)
-            // 3. Supresión sostenida post-corte (no es sólo un notch o caída momentánea)
-            if db_before >= (ref_level - 45.0).max(-75.0) && drop >= 20.0 {
+            // 3. Supresión sostenida post-corte (no es un notch aislado)
+            if db_before >= (ref_level - 70.0).max(-85.0) && drop >= 20.0 {
                 let p_post: f64 = avg_power[b_end..n_bins].iter().map(|&p| p as f64).sum::<f64>()
                     / (n_bins - b_end).max(1) as f64;
                 let db_post = 10.0 * (p_post + 1e-12).log10();
 
-                if db_post <= (db_before - 18.0) {
+                if db_post <= (db_before - 16.0) {
                     let f_center = b as f64 * bin_hz;
                     let delta_f = (f_center * 0.08).max(400.0);
                     let f1 = (f_center - delta_f).max(100.0);
@@ -110,10 +119,11 @@ pub fn analyze_spectrum(
         }
     }
 
-    let (cutoff_bin, effective_bandwidth_hz, cutoff_slope_db_oct) = if let Some((b_exact, _, slope)) = detected_cliff {
-        // Se detectó corte brickwall artificial
+    let (cutoff_kind, cutoff_frequency_hz, content_bandwidth_hz, cutoff_bin, effective_bandwidth_hz, cutoff_slope_db_oct) = if let Some((b_exact, _, slope)) = detected_cliff {
+        // Se detectó corte brickwall artificial (MP3 / AAC / etc.)
         let f_measured = b_exact as f64 * bin_hz;
-        (b_exact, f_measured.round() as u32, slope)
+        let hz = f_measured.round() as u32;
+        (CutoffKind::BrickwallCutoff, Some(hz), hz, b_exact, hz, slope)
     } else {
         // No existe corte brickwall artificial.
         // Verificar presencia de energía en el extremo superior (88% Nyquist a Nyquist)
@@ -124,9 +134,9 @@ pub fn analyze_spectrum(
 
         if top_band_db >= (ref_level - 50.0).max(-82.0) {
             // Espectro pleno hasta Nyquist sin restricción artificial
-            (n_bins.saturating_sub(1), nyquist as u32, 0.0)
+            (CutoffKind::FullSpectrum, None, nyquist as u32, n_bins.saturating_sub(1), nyquist as u32, 0.0)
         } else {
-            // Decaimiento acústico natural sin filtro brickwall (ej. máster vintage o acústico)
+            // Decaimiento acústico natural sin filtro brickwall (ej. máster vintage o mezcla oscura)
             let presence_threshold = (ref_level - 45.0).max(-78.0);
             let mut natural_cutoff_bin = n_bins.saturating_sub(1);
             let mut consecutive = 0;
@@ -144,7 +154,7 @@ pub fn analyze_spectrum(
 
             let measured_hz = natural_cutoff_bin as f64 * bin_hz;
             if measured_hz >= nyquist * 0.92 {
-                (n_bins.saturating_sub(1), nyquist as u32, 0.0)
+                (CutoffKind::FullSpectrum, None, nyquist as u32, n_bins.saturating_sub(1), nyquist as u32, 0.0)
             } else {
                 let f_center = measured_hz;
                 let delta_f = (f_center * 0.1).max(400.0);
@@ -157,7 +167,7 @@ pub fn analyze_spectrum(
                 let octaves = (f2 / f1).log2().max(0.1);
                 let slope = delta_db / octaves;
 
-                (natural_cutoff_bin, measured_hz.round() as u32, slope)
+                (CutoffKind::NaturalRolloff, None, measured_hz.round() as u32, natural_cutoff_bin, measured_hz.round() as u32, slope)
             }
         }
     };
@@ -245,6 +255,9 @@ pub fn analyze_spectrum(
     }
 
     SpectrumAnalysis {
+        cutoff_kind,
+        cutoff_frequency_hz,
+        content_bandwidth_hz,
         effective_bandwidth_hz,
         cutoff_slope_db_oct,
         shelf_16k_drop_db,

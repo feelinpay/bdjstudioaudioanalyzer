@@ -191,7 +191,17 @@ pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineI
     let expected_bytes = mac.finalize().into_bytes();
     let expected_hex = expected_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
-    if token_digest.to_lowercase() != expected_hex.to_lowercase() {
+    // Comparación en tiempo constante (sin cortocircuito) para prevenir timing attacks
+    let digest_clean = token_digest.trim().to_lowercase();
+    let expected_clean = expected_hex.to_lowercase();
+    if digest_clean.len() != expected_clean.len() {
+        return Err("Token de capacidad inválido o alterado".to_string());
+    }
+    let mut diff: u8 = 0;
+    for (a, b) in digest_clean.bytes().zip(expected_clean.bytes()) {
+        diff |= a ^ b;
+    }
+    if diff != 0 {
         return Err("Token de capacidad inválido o alterado".to_string());
     }
 

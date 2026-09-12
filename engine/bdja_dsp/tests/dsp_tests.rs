@@ -351,3 +351,209 @@ fn test_dsp_joint_stereo_collapse() {
     assert!(e07_ev.llr > 2.0, "E07 LLR {} must be > 2.0 for intensity stereo collapse", e07_ev.llr);
     assert!(output.is_strong_evidence_present, "Joint stereo collapse must count as strong evidence");
 }
+
+#[test]
+fn test_dsp_mp3_320_transcode_is_convicted() {
+    // P0-9 & AUDIT v3.0: Un MP3 320 convertido a WAV (corte a ~20.5 kHz) NUNCA debe salir LosslessVerified
+    let sample_rate = 44100;
+
+    // Sintetizar mezcla con armónicos densos hasta 20.5 kHz y silencio/filtro digital por encima
+    let mut windows_8192 = Vec::new();
+    for phase_offset in 0..4 {
+        let mut win = vec![0.0f32; 8192];
+        for f_idx in 1..=80 {
+            let freq = 200.0 + f_idx as f32 * 253.0; // Armónicos densos hasta 20.440 Hz
+            let phase = phase_offset as f32 * 0.4 + f_idx as f32 * 0.2;
+            let amp = 1.0 / (1.0 + (freq / 3500.0).powf(0.8));
+            for (i, s) in win.iter_mut().enumerate() {
+                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 30.0;
+            }
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 180000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true, // Declarado engañosamente como WAV sin pérdida
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.85,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    // 1. Debe haber detectado el corte brickwall
+    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01).unwrap();
+    assert!(e01.llr > 0.0, "E01 debe penalizar con LLR positivo (+1.2), obtenido: {}", e01.llr);
+
+    // 2. E02 debe estar activa y medir pendiente vertical
+    let e02 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E02).unwrap();
+    assert!(e02.applicable, "E02 debe ser aplicable ante corte brick-wall");
+    assert!(e02.llr >= 1.0, "E02 debe penalizar con pendiente vertical, obtenido: {}", e02.llr);
+
+    // 3. Evaluar veredicto
+    let verdict_res = bdja_verdict::evaluate_verdict(
+        &facts,
+        &output.evidences,
+        &output.guards_triggered,
+        output.is_strong_evidence_present,
+    );
+
+    // NUNCA debe salir certificado como LosslessVerified ni LikelyLossless
+    assert_ne!(
+        verdict_res.verdict,
+        bdja_core::types::Verdict::LosslessVerified,
+        "CRÍTICO P0-9: MP3 320 no puede ser calificado como LosslessVerified! Score: {}",
+        verdict_res.score_llr
+    );
+    assert_ne!(
+        verdict_res.verdict,
+        bdja_core::types::Verdict::LikelyLossless,
+        "MP3 320 no puede ser calificado como LikelyLossless! Score: {}",
+        verdict_res.score_llr
+    );
+    assert!(
+        verdict_res.score_llr >= 0.0,
+        "Score LLR {} debe ser >= 0.0 para un transcode de 320 kbps",
+        verdict_res.score_llr
+    );
+}
+
+#[test]
+fn test_dsp_dark_mix_mp3_128_detected() {
+    // §03 v3.0: Mezcla oscura (-15 dB/oct) con corte de MP3 128 (16 kHz) debe ser detectada
+    let sample_rate = 44100;
+
+    let mut windows_8192 = Vec::new();
+    for phase_offset in 0..4 {
+        let mut win = vec![0.0f32; 8192];
+        for f_khz in 1..=16 {
+            let freq = f_khz as f32 * 1000.0;
+            // Mezcla oscura con roll-off pronunciado
+            let amp = 1.0 / (1.0 + (freq / 1500.0).powf(1.8));
+            let phase = phase_offset as f32 * 0.5;
+            for (i, s) in win.iter_mut().enumerate() {
+                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 15.0;
+            }
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 180000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.8,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    // Debe detectar el corte a ~16 kHz
+    assert!(
+        output.effective_bandwidth_hz <= 16500 && output.effective_bandwidth_hz >= 15500,
+        "Corte en mezcla oscura debe ser detectado a ~16000 Hz, obtenido: {}",
+        output.effective_bandwidth_hz
+    );
+    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01).unwrap();
+    assert_eq!(e01.llr, 2.2, "E01 debe aportar LLR +2.2 para corte a 16 kHz");
+}
+
+#[test]
+fn test_dsp_dark_mix_lossless_exonerated() {
+    // §03 v3.0: Mezcla oscura genuina (sin corte brick-wall) debe exonerarse con la guarda
+    let sample_rate = 44100;
+
+    let mut rng: u32 = 99999;
+    let mut next_dither = || -> f32 {
+        rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+        (((rng % 20000) as f32 / 10000.0) - 1.0) * 0.00002 // dither floor ~ -94 dBFS
+    };
+
+    let mut windows_8192 = Vec::new();
+    for phase_offset in 0..4 {
+        let mut win = vec![0.0f32; 8192];
+        for f_khz in 1..=22 {
+            let freq = f_khz as f32 * 1000.0;
+            // Roll-off acústico pronunciado continuo (-18 dB/oct) sin salto brickwall
+            let amp = 1.0 / (1.0 + (freq / 1500.0).powf(3.0));
+            let phase = phase_offset as f32 * 0.5;
+            for (i, s) in win.iter_mut().enumerate() {
+                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 15.0
+                    + next_dither();
+            }
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "FLAC".to_string(),
+        codec: "FLAC 16-bit".to_string(),
+        codec_type: Codec::Flac,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 180000,
+        container_bitrate_kbps: Some(850),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.8,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    // E01 no debe penalizar (LLR = 0.0)
+    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01).unwrap();
+    assert_eq!(e01.llr, 0.0, "Mezcla oscura sin corte artificial no debe penalizarse en E01");
+
+    // Debe activar la guarda de material acústico limitado
+    assert!(
+        output.guards_triggered.iter().any(|g| g.contains("ancho de banda limitado")),
+        "Debe activar la guarda de material acústico limitado"
+    );
+}
