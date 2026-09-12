@@ -12,3 +12,6 @@ rustfft = "6.2"
 rubato = "0.15"
 parking_lot = "0.12"
 thiserror = "2.0"
+
+[dev-dependencies]
+bdja_verdict = { path = "../bdja_verdict" }

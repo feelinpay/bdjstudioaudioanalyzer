@@ -140,20 +140,28 @@ fn test_dsp_brickwall_transcode_detection() {
 fn test_dsp_natural_band_limited_guard() {
     let sample_rate = 44100;
 
-    // Synthesize audio with natural acoustic gentle slope (-12 dB/oct roll-off starting at 8 kHz)
+    // Synthesize audio with natural acoustic gentle slope (-12 dB/oct roll-off) and dither floor
+    let mut rng: u32 = 987654321;
+    let mut next_dither = || -> f32 {
+        rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+        (((rng % 20000) as f32 / 10000.0) - 1.0) * 0.0003 // -70 dBFS dither floor
+    };
+
     let mut windows_8192 = Vec::new();
     for phase_offset in 0..4 {
         let mut win = vec![0.0f32; 8192];
-        for f_khz in 1..=18 {
+        for f_khz in 1..=22 {
             let freq = f_khz as f32 * 1000.0;
-            let amp = if f_khz <= 8 {
+            // Roll-off rápido que decae suavemente hacia el piso antes de 16 kHz
+            let amp = if f_khz <= 6 {
                 1.0
             } else {
-                1.0 / (1.0 + ((f_khz - 8) as f32).powi(2) * 0.4)
+                1.0 / (1.0 + ((f_khz - 6) as f32).powi(2) * 1.5)
             };
             let phase = phase_offset as f32 * 0.5;
             for (i, s) in win.iter_mut().enumerate() {
-                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 15.0;
+                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 15.0
+                    + next_dither();
             }
         }
         windows_8192.push(win);
@@ -186,13 +194,105 @@ fn test_dsp_natural_band_limited_guard() {
         false,
     );
 
-    // Natural gentle rolloff must trigger band-limited guard if bandwidth is restricted
-    if output.effective_bandwidth_hz < 20000 {
-        assert!(
-            output.guards_triggered.iter().any(|g| g.contains("ancho de banda limitado")),
-            "Should have triggered band-limited guard for gentle slope"
-        );
+    // Natural gentle rolloff must trigger band-limited guard unconditionally
+    assert!(
+        output.effective_bandwidth_hz < 20000,
+        "Bandwidth should be restricted by natural decay, got {}",
+        output.effective_bandwidth_hz
+    );
+    assert!(
+        output.guards_triggered.iter().any(|g| g.contains("ancho de banda limitado")),
+        "Should have triggered band-limited guard for gentle slope"
+    );
+}
+
+#[test]
+fn test_dsp_continuous_lossless_attains_verified() {
+    let sample_rate = 44100;
+
+    // Synthesize dense musical master: harmonics across the entire spectrum up to 22.05 kHz
+    // with natural musical spectral density (-4.5 dB/octave) + analog dither
+    let mut rng: u32 = 42424242;
+    let mut next_dither = || -> f32 {
+        rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+        (((rng % 20000) as f32 / 10000.0) - 1.0) * 0.00015 // dither floor ~ -76 dBFS
+    };
+
+    let mut windows_8192 = Vec::new();
+    for phase_offset in 0..6 {
+        let mut win = vec![0.0f32; 8192];
+        for f_idx in 1..=100 {
+            let freq = 100.0 + f_idx as f32 * 218.0; // Distribuido densamente hasta 21.9 kHz
+            let amp = 1.0 / (1.0 + (freq / 4000.0).powf(0.8)); // Decaimiento musical estándar
+            let phase = phase_offset as f32 * 0.3 + f_idx as f32 * 0.1;
+            for (i, s) in win.iter_mut().enumerate() {
+                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 35.0
+                    + next_dither();
+            }
+        }
+        windows_8192.push(win);
     }
+
+    let facts = FormatFacts {
+        container: "FLAC".to_string(),
+        codec: "FLAC 16-bit".to_string(),
+        codec_type: Codec::Flac,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 240000,
+        container_bitrate_kbps: Some(900),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.85,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    // Debe medir ancho de banda completo hasta Nyquist (>= 21.000 Hz)
+    assert!(
+        output.effective_bandwidth_hz >= 21000,
+        "Lossless master should reach >= 21000 Hz, got {}",
+        output.effective_bandwidth_hz
+    );
+
+    // E01 debe haber otorgado el LLR negativo de exoneración (-1.8)
+    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01);
+    assert!(e01.is_some(), "E01 evidence must be present");
+    assert_eq!(e01.unwrap().llr, -1.8, "E01 LLR must be -1.8 for full lossless bandwidth");
+
+    // Evaluar veredicto con el motor de veredicto
+    let verdict_res = bdja_verdict::evaluate_verdict(
+        &facts,
+        &output.evidences,
+        &output.guards_triggered,
+        output.is_strong_evidence_present,
+    );
+
+    assert_eq!(
+        verdict_res.verdict,
+        bdja_core::types::Verdict::LosslessVerified,
+        "Master genuino debe alcanzar LosslessVerified! Obtenido: {:?}, score: {}, summary: {}",
+        verdict_res.verdict,
+        verdict_res.score_llr,
+        verdict_res.summary
+    );
+    assert!(
+        verdict_res.score_llr <= -4.0,
+        "Score LLR {} debe ser <= -4.0 para certificar LosslessVerified",
+        verdict_res.score_llr
+    );
 }
 
 #[test]

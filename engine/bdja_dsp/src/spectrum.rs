@@ -61,57 +61,106 @@ pub fn analyze_spectrum(
         .cloned()
         .fold(f64::NEG_INFINITY, f64::max);
 
-    // High-frequency floor (last 5% of bins up to Nyquist)
-    let high_start = ((0.95 * n_bins as f64) as usize).min(n_bins - 1);
-    let hf_floor: f64 = smoothed_db[high_start..].iter().sum::<f64>()
-        / (n_bins - high_start).max(1) as f64;
+    // P0-2 FIX & AUDIT v2.0: Detector de borde por ventana diferencial (E01)
+    // Busca caídas abruptas (brickwall filter típico de códecs lossy) entre ventanas contiguas de ~1.200 Hz
+    let step_hz = 1200.0;
+    let win_bins = ((step_hz / bin_hz).round() as usize).max(8);
+    let bin_8k = ((8000.0 / bin_hz) as usize).clamp(win_bins, n_bins - 1);
+    let bin_nyquist_margin = (((nyquist - 600.0) / bin_hz) as usize).clamp(bin_8k, n_bins - 1);
 
-    // P0-2 FIX: Detección por BORDE DE CONTENIDO
-    // Un corte de códec lossy produce una caída donde la energía cae abruptamente
-    // hacia el piso de ruido. Buscamos el bin más alto donde haya presencia musical consistente
-    // (al menos 3 bins consecutivos por encima del umbral de significancia acústica).
-    let presence_threshold = (ref_level - 45.0).max(hf_floor + 10.0).max(-90.0);
+    let mut detected_cliff: Option<(usize, f64, f64)> = None; // (cutoff_bin, drop, slope)
 
-    let mut cutoff_bin = n_bins.saturating_sub(1);
-    let mut consecutive = 0;
+    // Barrido buscando escalón digital (brickwall) entre 8 kHz y Nyquist - 600 Hz
+    let step_stride = (win_bins / 4).max(1);
+    for b in (bin_8k..=bin_nyquist_margin).step_by(step_stride) {
+        let b_start = b.saturating_sub(win_bins);
+        let b_end = (b + win_bins).min(n_bins);
 
-    for i in (bin_1k..n_bins).rev() {
-        if smoothed_db[i] >= presence_threshold {
-            consecutive += 1;
-            if consecutive >= 3 {
-                cutoff_bin = (i + 2).min(n_bins - 1);
-                break;
+        if b_start < b && b < b_end {
+            let p_before: f64 = avg_power[b_start..b].iter().map(|&p| p as f64).sum::<f64>()
+                / (b - b_start) as f64;
+            let p_after: f64 = avg_power[b..b_end].iter().map(|&p| p as f64).sum::<f64>()
+                / (b_end - b) as f64;
+
+            let db_before = 10.0 * (p_before + 1e-12).log10();
+            let db_after = 10.0 * (p_after + 1e-12).log10();
+            let drop = db_before - db_after;
+
+            // Condición de corte digital:
+            // 1. Hay energía acústica real antes del corte (por encima del umbral de silencio)
+            // 2. Caída abrupta >= 20 dB en sólo 1.200 Hz (equivalente a > 50 dB/octava)
+            // 3. Supresión sostenida post-corte (no es sólo un notch o caída momentánea)
+            if db_before >= (ref_level - 45.0).max(-75.0) && drop >= 20.0 {
+                let p_post: f64 = avg_power[b_end..n_bins].iter().map(|&p| p as f64).sum::<f64>()
+                    / (n_bins - b_end).max(1) as f64;
+                let db_post = 10.0 * (p_post + 1e-12).log10();
+
+                if db_post <= (db_before - 18.0) {
+                    let f_center = b as f64 * bin_hz;
+                    let delta_f = (f_center * 0.08).max(400.0);
+                    let f1 = (f_center - delta_f).max(100.0);
+                    let f2 = (f_center + delta_f).min(nyquist);
+                    let octaves = (f2 / f1).log2().max(0.1);
+                    let slope = (drop / octaves).max(45.0);
+
+                    detected_cliff = Some((b, drop, slope));
+                    break; // Tomar el primer corte artificial verificado
+                }
             }
-        } else {
-            consecutive = 0;
         }
     }
 
-    let measured_hz = cutoff_bin as f64 * bin_hz;
-    let effective_bandwidth_hz = if measured_hz >= nyquist * 0.95 {
-        nyquist as u32
+    let (cutoff_bin, effective_bandwidth_hz, cutoff_slope_db_oct) = if let Some((b_exact, _, slope)) = detected_cliff {
+        // Se detectó corte brickwall artificial
+        let f_measured = b_exact as f64 * bin_hz;
+        (b_exact, f_measured.round() as u32, slope)
     } else {
-        measured_hz.round() as u32
+        // No existe corte brickwall artificial.
+        // Verificar presencia de energía en el extremo superior (88% Nyquist a Nyquist)
+        let top_band_start = ((nyquist * 0.88) / bin_hz) as usize;
+        let top_band_p: f64 = avg_power[top_band_start..n_bins].iter().map(|&p| p as f64).sum::<f64>()
+            / (n_bins - top_band_start).max(1) as f64;
+        let top_band_db = 10.0 * (top_band_p + 1e-12).log10();
+
+        if top_band_db >= (ref_level - 50.0).max(-82.0) {
+            // Espectro pleno hasta Nyquist sin restricción artificial
+            (n_bins.saturating_sub(1), nyquist as u32, 0.0)
+        } else {
+            // Decaimiento acústico natural sin filtro brickwall (ej. máster vintage o acústico)
+            let presence_threshold = (ref_level - 45.0).max(-78.0);
+            let mut natural_cutoff_bin = n_bins.saturating_sub(1);
+            let mut consecutive = 0;
+            for i in (bin_1k..n_bins).rev() {
+                if smoothed_db[i] >= presence_threshold {
+                    consecutive += 1;
+                    if consecutive >= 3 {
+                        natural_cutoff_bin = (i + 2).min(n_bins - 1);
+                        break;
+                    }
+                } else {
+                    consecutive = 0;
+                }
+            }
+
+            let measured_hz = natural_cutoff_bin as f64 * bin_hz;
+            if measured_hz >= nyquist * 0.92 {
+                (n_bins.saturating_sub(1), nyquist as u32, 0.0)
+            } else {
+                let f_center = measured_hz;
+                let delta_f = (f_center * 0.1).max(400.0);
+                let f1 = (f_center - delta_f).max(100.0);
+                let f2 = (f_center + delta_f).min(nyquist);
+
+                let bin1 = ((f1 / bin_hz) as usize).min(n_bins - 1);
+                let bin2 = ((f2 / bin_hz) as usize).min(n_bins - 1);
+                let delta_db = (smoothed_db[bin1] - smoothed_db[bin2]).max(0.0);
+                let octaves = (f2 / f1).log2().max(0.1);
+                let slope = delta_db / octaves;
+
+                (natural_cutoff_bin, measured_hz.round() as u32, slope)
+            }
+        }
     };
-
-    // 2. E02: Cutoff Slope (dB/octave around cutoff)
-    let mut cutoff_slope_db_oct = 0.0;
-    if cutoff_bin > 10 && cutoff_bin < n_bins - 10 && effective_bandwidth_hz < (nyquist * 0.95) as u32 {
-        let f_center = cutoff_bin as f64 * bin_hz;
-        let delta_f = (f_center * 0.1).max(400.0);
-        let f1 = (f_center - delta_f).max(100.0);
-        let f2 = (f_center + delta_f).min(nyquist);
-
-        let bin1 = ((f1 / bin_hz) as usize).min(n_bins - 1);
-        let bin2 = ((f2 / bin_hz) as usize).min(n_bins - 1);
-
-        let db1 = smoothed_db[bin1];
-        let db2 = smoothed_db[bin2];
-        let delta_db = (db1 - db2).max(0.0);
-
-        let octaves = (f2 / f1).log2().max(0.1);
-        cutoff_slope_db_oct = delta_db / octaves;
-    }
 
     // 3. E03: 16 kHz Shelf (drop between 14-16 kHz and 16-18 kHz)
     let bin_14k = ((14000.0 / bin_hz) as usize).min(n_bins - 1);

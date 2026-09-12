@@ -1,321 +1,244 @@
-# BDJ Studio Audio Analyzer — Auditoría de código v1.0
+# BDJ Studio Audio Analyzer — Auditoría de código v2.0
 
-> Auditoría del 12 de septiembre de 2026 · 10 crates Rust y 12 módulos Dart contrastados con PLAN_ARQUITECTURA.md
-> 5 hallazgos bloqueantes verificados, 9 de precisión, 11 de producto. Versión navegable publicada como artifact.
+> Segunda pasada · 12 de septiembre de 2026 · contrastada con PLAN_ARQUITECTURA.md v1.1 y la auditoría v1.0
+> 6 de 8 bloqueantes resueltos · 2 abiertos · 10 hallazgos nuevos · no listo para producción todavía
 
-BDJ Studio · Auditoría técnica de código
+BDJ Studio · Auditoría técnica · segunda pasada
 
 # Auditoría del Audio Analyzer
 
-Revisión del código real que hay hoy en el repositorio, contrastado línea por línea con el plan de arquitectura. El esqueleto está bien construido y compila; el motor de detección, en cambio, hoy no llega a ejecutarse. Aquí está todo, ordenado por lo que rompe el producto primero.
+Revisión de la actualización. Seis de los ocho bloqueantes están resueltos y bien resueltos, con tests que los cubren. Queda un defecto de medición que hace inalcanzable el mejor veredicto, una protección que existe en el repo pero no está conectada, y la calibración, que sigue sin empezar. No está listo para producción, pero ya no está lejos.
 
-**Revisado** 12 sep 2026 **Alcance** 10 crates Rust · 12 módulos Dart · 192 KB de fuente **Estado** compila y arranca · release dll presente **Hallazgos** 5 bloqueantes · 9 de precisión · 11 de producto
+**Revisado** 12 sep 2026 · v2.0 **Cambios** +60 KB de fuente · 9 tests nuevos **Bloqueantes** 6 resueltos · 2 abiertos **Producción** no todavía
 
-## 0. Resumen en una pantalla
+## 0. ¿Está listo para producción? ¿Quedó al 100 %?
 
-AndamiajeSólidoworkspace de 10 crates, FFI generado, licencia SPP3 real, UI navegable, compila en release
+**No, y no.** Pero la distancia cambió mucho: en la pasada anterior el motor no llegaba a ejecutarse; ahora ejecuta, detecta transcodes con precisión y ya no acusa a los archivos legítimos de tu público. Diría que estás en torno al **70 % del camino a una v1 vendible**.
 
-Motor de veredictoNo se ejecutaun bug de una línea manda todos los archivos a «Con pérdida declarado»
+Detección de lossyFuncionamide el corte de MP3 128/192/320 y AAC con error menor a 20 Hz
 
-Escaneo masivoTope de 1 000un hilo, sin caché, sin reanudar, sin progreso real ni cancelación
+Certificar un losslessImposible«Lossless verificado» es inalcanzable por construcción del score
 
-### Estado de las 21 secciones del plan
+CalibraciónSin empezarlos pesos siguen escritos a mano, sin corpus ni medición de FPR
 
-  
+Las tres razones por las que un revisor senior no aprobaría el paso a producción hoy, en orden:
 
-7 implementadas 8 parciales 6 ausentes
+1.  **Los números que muestra al usuario no son correctos todavía.** Un WAV lossless de banda completa reporta un ancho de banda de 7-12 kHz en vez de 22 kHz. Ya no lo acusa —la guarda nueva lo evita— pero el dato que aparece en pantalla y en el reporte exportado es falso, y el mejor veredicto posible queda fuera de alcance (§02).
+2.  **La confianza que muestra no está medida.** «91 % de confianza» sale de una sigmoide sobre pesos que alguien eligió a mano. Sin corpus ni tasa de falsos positivos medida, ese número no significa nada, y es el número con el que un DJ va a reclamarle a un sello.
+3.  **Un archivo malformado de un USB ajeno sigue pudiendo cerrar la app** en mitad de un escaneo de 40 000 pistas. La protección está escrita en el repo pero no está conectada (§03).
 
-La forma de decirlo sin adornos: **alguien construyó muy bien la carrocería y el motor está desconectado del volante**. Todo lo estructural del plan está ahí y bien puesto — la separación en crates, el catálogo de las 14 evidencias con sus códigos, los 6 estados de veredicto, la puerta de evidencia fuerte, las guardas, el licenciamiento SPP3 con HWID V2 real. Lo que no está es lo que decide si el producto es creíble: el cálculo del ancho de banda no funciona sobre música real, el análisis mira solo los primeros 6 segundos de cada pista, el espectro que se dibuja en pantalla es inventado, y el veredicto nunca se calcula porque la detección de códec falla antes.
+Lo que sí hay que reconocer
 
-Lo bueno de esta noticia
+Los seis arreglos que sí se hicieron están hechos *bien*, no a la carrera: enum de códecs con mapeo explícito y test, *seek* real a 12 segmentos con camino de respaldo, espectro real atravesando motor, base de datos y FFI, job de escaneo asíncrono con rayon y cancelación de verdad, filtro biquad real para el joint-stereo, y nueve tests nuevos que cubren precisamente los casos que fallaban. Eso es trabajo de buena calidad.
 
-Cuatro de los cinco bloqueantes son bugs puntuales, no errores de diseño: se arreglan en archivos concretos sin tocar la arquitectura. El quinto (escaneo masivo real) es trabajo de implementación que ya tiene su sitio reservado en el diseño. No hay nada que haya que rehacer desde cero.
+## 01. Estado de los ocho bloqueantes
 
-## 01. Bloqueantes
+| ID   | Hallazgo anterior                                                   | Estado           | Verificación                                                                                                                                                                                                                                                                                                                                                                                  |
+|------|---------------------------------------------------------------------|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| P0-1 | El veredicto nunca se calculaba: todo salía «Con pérdida declarado» | \*\*Resuelto\*\* | Nuevo `enum Codec` en `bdja_core` con mapeo explícito de las 15 constantes `CODEC_TYPE_*`, `is_lossless()` derivado del enum y `display_name()` legible. Cubierto por `test_symphonia_codec_mapping`. Bien hecho: ya no hay lógica de negocio sobre un `Debug`.                                                                                                                               |
+| P0-2 | El ancho de banda efectivo no discriminaba sobre música real        | \*\*Parcial\*\*  | Sustituido por detección de borde de contenido, y para material con pérdida es **excelente**: mide 15 988 Hz donde el corte real es 16 000, y 20 489 donde es 20 500. Pero el término `hf_floor + 10` del umbral rompe el caso lossless. Ver §02 — es el defecto más importante que queda.                                                                                                    |
+| P0-3 | Solo se analizaban los primeros 6 segundos                          | \*\*Resuelto\*\* | `format.seek(SeekMode::Coarse, …)` a 12 segmentos entre el 5 % y el 95 % de la duración, con respaldo secuencial si el formato no soporta *seek* o si se obtienen menos de 4 ventanas. Exactamente lo que pedía la §06 del plan.                                                                                                                                                              |
+| P0-4 | El espectro de pantalla estaba inventado                            | \*\*Resuelto\*\* | `average_spectrum_db` viaja ahora en `FileReport`, se persiste como `spectrum_json` en SQLite y llega al FFI. `generate_spectrum_curve` eliminada. Lo que se dibuja es el audio del usuario.                                                                                                                                                                                                  |
+| P0-5 | Escaneo de un hilo, tope de 1 000, sin caché ni cancelación         | \*\*Casi\*\*     | `start_scan_job` / `poll_scan_job` / `cancel_scan_job`, hilo en segundo plano, pool de rayon con modos turbo/normal/silent, caché por SQLite y sin tope de archivos. La UI hace *polling* a 10 Hz y cancela de verdad. Quedan cuatro cosas, todas en §04: la clave de caché sin `mtime`, el recorrido en dos fases sin progreso, la ausencia de reanudación y la cola de reportes sin límite. |
+| P0-6 | Un WAV convertido con FFmpeg se marcaba como transcode              | \*\*Resuelto\*\* | `Lavf` se separó en `has_lossy_encoder_signature` vs. software de exportación legítimo; ahora aporta LLR 0,0 y se muestra como dato informativo. Cubierto por `test_forensic_lavf_ffmpeg_is_not_lossy_signature`.                                                                                                                                                                             |
+| P0-7 | Los WAV etiquetados por Serato/Rekordbox se marcaban como anómalos  | \*\*Resuelto\*\* | LLR 0,0 y el texto «Metadatos estándar de software DJ presentes (Serato/Rekordbox). Totalmente legítimo.» Cubierto por `test_forensic_id3_in_wav_dj_metadata_not_transcode`. Este era el que más te iba a costar clientes.                                                                                                                                                                    |
+| P0-8 | El gate de capacidad no gatea nada                                  | \*\*Abierto\*\*  | Sin cambios. `deriveCapabilityToken` sigue haciendo HMAC de la cadena literal `'::::'` ignorando `hwid` y `engineRev`, y `engine_init` en Rust sigue aceptando cualquier cadena no vacía. El `.dll` extraído del instalador se usa escribiendo `"x"`.                                                                                                                                         |
 
-Cinco cosas que impiden que la aplicación haga hoy aquello para lo que existe. En este orden.
+También se resolvió, sin que estuviera en la lista de bloqueantes: **E07 (joint-stereo)** ahora usa un filtro Butterworth de segundo orden real y prueba cruces candidatos a 10, 12, 14 y 16 kHz en vez de una primera diferencia sobre toda la señal con un cruce inventado. Y el **true peak** pasó de `pico × 1,05` a una interpolación entre muestras. Ambos eran P1 y están mejor.
 
-#### \*\*P0-1\*\* El veredicto nunca se calcula: todos los archivos salen como «Con pérdida declarado» \`bdja_decode/src/decoder.rs\`
+## 02. El defecto que queda: un lossless no puede certificarse
 
-El códec se convierte a texto con `format!("{:?}", codec_params.codec)` y después se busca `"Pcm"`, `"Flac"` o `"Alac"` dentro de ese texto para decidir `is_lossless_declared`.
+Este es el hallazgo importante de esta pasada, y es de una línea.
 
-Pero `CodecType` en Symphonia es una tupla sobre un `u32` (`pub struct CodecType(u32)`, verificado en el fuente de `symphonia-core 0.5.4`), y su `Debug` no imprime un nombre: imprime el número. `CODEC_TYPE_PCM_S16LE` es `CodecType(0x108)`, así que el texto que sale es literalmente `"CodecType(264)"`, y FLAC es `"CodecType(8192)"`.
+El nuevo detector de borde calcula su umbral así:
 
-Consecuencia en cadena: `is_lossless_declared` es **siempre falso** → `evaluate_verdict` entra por su primera rama y devuelve `DeclaredLossy` con confianza 0,99 → las 14 evidencias se calculan y se tiran a la basura → y en la ficha del archivo el usuario lee *«Códec: CodecType(264)»*. Se comprueba en 30 segundos: arrastra cualquier WAV y mira el veredicto.
+    let presence_threshold = (ref_level - 45.0)
+        .max(hf_floor + 10.0)     // ← el problema
+        .max(-90.0);
 
-**Arreglo**Mapear explícitamente las constantes de Symphonia (`CODEC_TYPE_PCM_*`, `CODEC_TYPE_FLAC`, `CODEC_TYPE_ALAC`, `CODEC_TYPE_MP3`, `CODEC_TYPE_AAC`, `CODEC_TYPE_VORBIS`…) a un `enum Codec` propio en `bdja_core`, con nombre legible y un `is_lossless()` derivado del enum. Nunca decidir lógica de negocio sobre el resultado de un `Debug`: es un detalle de implementación de terceros que puede cambiar en cualquier versión. Añadir un test por cada códec soportado.
+`hf_floor` es el nivel medio del último 5 % de bins, o sea de 20,9 a 22,05 kHz. En un archivo con pérdida esa banda está muerta (−107 dB en mi reproducción), así que domina `ref_level − 45` y la medición sale perfecta. Pero en un **lossless de banda completa esa banda tiene contenido real**, así que el umbral se coloca 10 dB por encima de lo que hay cerca de Nyquist, y el barrido desciende hasta encontrar algo 10 dB más fuerte. La paradoja: cuanto mejor es el contenido de agudos, más bajo el ancho de banda que se reporta.
 
-#### \*\*P0-2\*\* El ancho de banda efectivo no discrimina sobre música real \`bdja_dsp/src/spectrum.rs\`
+Reproduje la implementación tal como está, con las mismas ventanas de 8192, el mismo suavizado de 5 bins y el mismo criterio de 3 bins consecutivos:
 
-E01 se calcula como la frecuencia donde la energía acumulada alcanza el 99,5 % del total. En música real la energía está concentrada en los graves, así que ese punto se alcanza muchísimo antes del corte verdadero. Lo reproduje con el mismo algoritmo, mismas ventanas de 8192 y mismo Hann:
+| Señal               | hf_floor  | umbral | BW medido     | Real   |
+|---------------------|-----------|--------|---------------|--------|
+| lossless −6 dB/oct  | −0,2 dB   | +9,8   | 7 300 Hz      | 22 050 |
+| lossless −9 dB/oct  | −12,6 dB  | −2,6   | 10 271 Hz     | 22 050 |
+| lossless −12 dB/oct | −26,0 dB  | −16,0  | 12 425 Hz     | 22 050 |
+| MP3 128             | −107,2 dB | −17,6  | **15 988 Hz** | 16 000 |
+| MP3 192             | −106,8 dB | −17,0  | **18 987 Hz** | 19 000 |
+| MP3 320             | −107,5 dB | −17,3  | **20 489 Hz** | 20 500 |
+| AAC 256             | −107,5 dB | −17,7  | **19 488 Hz** | 19 500 |
 
-| Señal de prueba                                            | Algoritmo actual | LLR E01 | Corregido |
-|------------------------------------------------------------|------------------|---------|-----------|
-| Ruido blanco *(el único caso que cubre el test existente)* | 21 942 Hz        | −1,8    | 22 050 Hz |
-| Ruido rosa (−3 dB/oct)                                     | 21 199 Hz        | −1,8    | 22 050 Hz |
-| Música típica −6 dB/oct · **lossless**                     | 13 916 Hz        | +2,2    | 22 050 Hz |
-| Música típica −9 dB/oct · **lossless**                     | 4 226 Hz         | +2,2    | 22 050 Hz |
-| Música típica −12 dB/oct · **lossless**                    | 2 406 Hz         | +2,2    | 22 050 Hz |
-| La misma −9 dB/oct pero **MP3 128** (corte real 16 kHz)    | 4 161 Hz         | +2,2    | 15 918 Hz |
-| La misma −9 dB/oct pero **MP3 192** (corte real 19 kHz)    | 4 382 Hz         | +2,2    | 18 912 Hz |
+### Por qué importa más de lo que parece
 
-Dos lecturas de esa tabla. Primera: un master lossless legítimo y su versión MP3 128 dan **el mismo número** — E01 tiene cero poder discriminante y se queda clavado en «+2,2 acusar». Segunda: el único test que existe usa ruido blanco, que es plano, y por eso pasa. El test valida el bug.
+La guarda nueva de material band-limited evita la acusación: cuando el ancho de banda sale bajo *y* la pendiente es suave, E01 pasa a LLR 0,0 en lugar de +2,2. Eso está bien pensado y salva el caso. Pero deja tres consecuencias:
 
-Y esto arrastra a E04, la evidencia más fuerte del catálogo: los huecos espectrales solo se calculan `if bin_10k < cutoff_bin`, y con un cutoff de 4 kHz esa condición es falsa, así que E04 devuelve 0,0 y aporta **−1,4 exonerando**. El motor acusa y absuelve el mismo archivo por dos vías distintas.
+1.  **El dato en pantalla es falso.** «Ancho de banda efectivo: 10 271 Hz» sobre un master íntegro es un número que un cliente técnico va a mirar y no va a creer. Y va impreso en el reporte que el DJ manda al proveedor.
+2.  **«Lossless verificado» es inalcanzable.** Esto es aritmética del código, no una estimación: en `dsp/pipeline.rs` solo existen cuatro LLR negativos —E01 −1,8, E02 −1,2, E04 −1,4 y E08 −0,8— y el veredicto máximo exige `score ≤ −4,0`. Sin el −1,8 de E01 el mínimo posible es −3,4. Y el −1,8 solo se concede si el ancho de banda medido llega a 20 500 Hz, que con este umbral no ocurre en música real. **El mejor veredicto que puede dar tu app hoy sobre un master auténtico es «Probablemente lossless».** Para un producto cuya propuesta es certificar autenticidad, y para tu idea de certificar el catálogo de BDJ LATAM, eso es un problema de negocio, no de ingeniería.
+3.  **La guarda depende de una correlación afortunada.** E02 se calcula alrededor del corte que encontró el umbral equivocado; funciona porque un roll-off natural da pendiente baja. Una mezcla oscura con una caída local algo más pronunciada puede pasar de 24 dB/oct, perder la guarda y quedar con E01 = +2,2 sobre un archivo legítimo. El falso positivo está mitigado, no eliminado.
 
-**Arreglo (validado)**El corte no es un percentil de energía, es el borde del contenido: frecuencia más alta cuyo nivel suavizado (~200 Hz) sigue por encima de una referencia — el máximo de la banda 1-6 kHz menos ~45 dB, o mejor el piso de ruido del propio archivo más un margen — exigiendo 3 bins consecutivos para no morder un pico aislado. Esa es la columna «Corregido» de la tabla: lossless da Nyquist, MP3 128 da 15,9 kHz y MP3 192 da 18,9 kHz. Y el test hay que rehacerlo con señales con forma de música, no con ruido blanco. *Esto es también culpa del plan: la §07 decía «percentil 99,5 % de energía acumulada» y la implementación lo siguió al pie de la letra. La corrijo en el plan.*
+### El arreglo, ya validado
 
-#### \*\*P0-3\*\* Solo se analizan los primeros ~6 segundos de cada pista \`bdja_decode/src/decoder.rs\`
+Quitar el término `hf_floor + 10.0` arregla los casos de −6 y −9 dB/oct (pasan a 22 050 Hz) y no toca la precisión en lossy. Pero deja fuera las mezclas muy oscuras (−12 y −15 dB/oct siguen midiendo bajo), porque **ningún umbral absoluto puede distinguir «caída natural pronunciada» de «corte de encoder»: el discriminante es la forma, no el nivel.**
 
-No hay *seek*. El decodificador arranca en el byte cero, va acumulando y para cuando `all_mono` llega a `8192 × 32 = 262 144` muestras: **5,9 segundos** a 44,1 kHz. Las «12 ventanas estratificadas» se reparten dentro de esos 6 segundos, no a lo largo de la canción.
+Lo que sí funciona es convertir E01 en un *detector de borde*: buscar la caída máxima entre dos ventanas contiguas de ~1500 Hz por encima de 8 kHz, exigir una caída mínima de 30 dB y comprobar que el contenido no vuelve después. Si no hay borde, el ancho de banda *es* Nyquist y E01 exonera. Lo implementé y lo probé sobre las mismas señales:
 
-En música de DJ eso es lo peor que se puede elegir: los primeros segundos son intro, fade-in, un filtro cerrado, a veces silencio o una voz sola. Un remix con intro filtrada se va a leer como band-limited, y un transcode cuyo primer tramo es tranquilo se va a escapar. Además convierte a E14 («consistencia temporal a lo largo de toda la pista») en una medida sobre 6 segundos, o sea en nada.
+| Señal                                   | Caída máx. | BW     | E01                        |
+|-----------------------------------------|------------|--------|----------------------------|
+| lossless −6 dB/oct                      | 1,6 dB     | 22 050 | \*\*sin borde → limpio\*\* |
+| lossless −9 dB/oct                      | 2,6 dB     | 22 050 | \*\*sin borde → limpio\*\* |
+| lossless −12 dB/oct                     | 3,2 dB     | 22 050 | \*\*sin borde → limpio\*\* |
+| lossless −15 dB/oct                     | 4,0 dB     | 22 050 | \*\*sin borde → limpio\*\* |
+| lossless −20 dB/oct (mezcla muy oscura) | 5,3 dB     | 22 050 | \*\*sin borde → limpio\*\* |
+| MP3 128                                 | 93,0 dB    | 16 005 | \*\*corte a 16,0 kHz\*\*   |
+| MP3 192                                 | 92,7 dB    | 19 003 | \*\*corte a 19,0 kHz\*\*   |
+| MP3 320                                 | 92,2 dB    | 20 483 | \*\*corte a 20,5 kHz\*\*   |
+| AAC 256                                 | 92,6 dB    | 19 504 | \*\*corte a 19,5 kHz\*\*   |
+| MP3 128 sobre mezcla oscura −15         | 85,1 dB    | 16 005 | \*\*corte a 16,0 kHz\*\*   |
 
-**Arreglo**`format.seek()` a 12 puntos repartidos por la duración real (p. ej. del 5 % al 95 %), decodificar solo ~16 384 muestras en cada punto y descartar los tramos silenciosos *después* de haberlos visitado, no antes. Si el formato no permite *seek* preciso, streaming con descarte y presupuesto de tiempo. Es exactamente lo que describe la §06 del plan y es lo que da sentido al muestreo estratificado.
+Separación total: entre 1,6 y 5,3 dB para todo lo legítimo, entre 85 y 93 dB para todo lo comprimido, y el corte localizado con un error de 5 Hz. Un aviso honesto: mi lowpass sintético es un muro a −95 dB, más abrupto que un encoder real, así que en archivos reales la caída será de 40 a 70 dB en lugar de 90. El umbral de 30 dB sigue teniendo margen de sobra, pero hay que confirmarlo con el corpus.
 
-#### \*\*P0-4\*\* El espectro que se muestra en pantalla está inventado \`bdja_ffi/src/api.rs · generate_spectrum_curve()\`
+Y con ese cambio el ancho de banda que se muestra vuelve a ser el real, con lo que E01 puede volver a conceder su −1,8 y «Lossless verificado» pasa a ser alcanzable.
 
-El espectro real se calcula bien en `spectrum.rs` (`average_spectrum_db`, 256 puntos) pero **nunca sale del motor**: no viaja en `FileReport`. En su lugar, la capa FFI genera la curva con una fórmula cerrada a partir del cutoff y la pendiente: `-12.0 - 18.0 * (f / cutoff)` antes del corte y una recta por octavas después.
+## 03. Hallazgos nuevos
 
-Es decir: la gráfica que el DJ mira para «ver la evidencia» es un dibujo idealizado que no contiene ni una muestra de su audio. Dos archivos distintos con el mismo cutoff estimado producen exactamente la misma curva. Para un producto cuya credibilidad es *«mira el espectro»*, y cuyo reporte se va a usar para reclamarle a un proveedor, esto no puede existir en ninguna versión, ni como *placeholder*.
+#### \*\*N-1\*\* La protección contra archivos malformados existe en el repo pero no está conectada \`bdja_ipc · bdja_worker · bdja_scan · bdja_ffi\`
 
-**Arreglo**Llevar `average_spectrum_db` desde `DspOutput` a `FileReport`, persistirlo en SQLite (256 `f32` son 1 KB por archivo; como BLOB o JSON comprimido) y pasarlo por FFI. Borrar `generate_spectrum_curve` por completo — y si un reporte viejo no tiene espectro guardado, la UI dibuja el hueco y dice «sin espectro almacenado», nunca una curva sintética.
+Esta pasada trajo `bdja_ipc/protocol.rs`, `bdja_ipc/supervisor.rs` y un `bdja_worker` funcional que lee `WorkerRequest` por `stdin`, analiza y responde. Está razonablemente escrito. Pero busqué quién lo usa y la respuesta es **nadie**: fuera de `bdja_worker` mismo, ningún crate importa `bdja_ipc`. `scan_collection` llama directamente a `analyze_single_file` en el proceso de la app.
 
-#### \*\*P0-5\*\* El escaneo masivo es un hilo, con tope de 1 000 archivos, sin caché ni reanudación \`bdja_scan/src/scanner.rs · bdja_ffi/src/api.rs · home_screen.dart\`
+Con `panic = "abort"` en el perfil release del workspace, eso significa que el escenario original sigue intacto: un WAV corrupto del USB de otro DJ cierra la aplicación y se pierde el escaneo. Y ahora es peor de otra manera: `build_native.ps1` copia `bdja_worker.exe` junto a la app, así que el instalador lleva un binario que no se ejecuta nunca. Infraestructura que *parece* protección es más peligrosa que no tenerla, porque nadie vuelve a mirarla.
 
-El requisito central era discos, USB y grandes volúmenes. Lo que hay:
+**Arreglo**Hacer que `scan_collection` obtenga un `WorkerProcess` del supervisor por cada hilo del pool y le mande la ruta, en vez de llamar a `analyze_single_file` directamente. Añadirle al supervisor lo que le falta —**no tiene ningún timeout**: si un worker se cuelga con un archivo raro, se queda colgado para siempre— y un tope de memoria por proceso. Alternativa honesta si no quieres esa complejidad ahora: borrar `bdja_ipc` y `bdja_worker` del workspace, poner `panic = "unwind"` y envolver cada análisis en `catch_unwind`. Protege menos, pero es coherente y deja de mentir sobre lo que hay.
 
-- `scanDirectoryAudio(rootPath, maxFiles: 1000)` — tope de mil archivos, fijado en la UI.
-- El bucle de análisis es `for path in found_files`, secuencial: **un solo núcleo**. `crossbeam-channel` y `blake3` están declarados como dependencias y no se usan.
-- Primero recorre *todo* el árbol a un `Vec` y luego analiza: sin backpressure, y el usuario no ve nada durante el recorrido (en un HDD completo, minutos en blanco).
-- Sin consulta de caché: `analyze_single_file` nunca mira la base de datos. El objetivo de «re-análisis ≤ 2 % del tiempo» no se cumple; cuesta el 100 %.
-- Sin `scan_job` ni checkpoints: no se puede reanudar. La tabla no existe en el esquema.
-- El progreso de carpeta es falso: `_totalToAnalyze = 100` fijo y `_analyzedCount` nunca se incrementa en esa ruta. La barra se queda en 0 % y salta al final.
-- «Cancelar» solo hace `setState(() => _isAnalyzing = false)`: el trabajo en Rust sigue hasta terminar. El `cancel_token` existe en `scan_directory`, pero esa función no es la que usa la app.
-- `ScanEvent`, `ScanOptions` y los modos de throttling están definidos en `bdja_core` y son **código muerto**: nada los emite ni los consume.
+#### \*\*N-2\*\* La caché puede devolver veredictos viejos justo en el caso más común de tu público \`bdja_scan/src/scanner.rs · bdja_store/src/db.rs\`
 
-**Arreglo**Sustituir la llamada bloqueante por el par `scan_start` + `scan_events(job_id) -> Stream<ScanEvent>` del contrato de la §12: walk y análisis solapados por una cola acotada, pool de `cores−1`, huella blake3 para caché y dedupe, checkpoint en SQLite cada 200 archivos, token de cancelación consultado en el walk, en la cola y entre ventanas. Sin tope de archivos.
+La clave de caché es `(ruta, file_size, engine_rev)`. Falta el `mtime`, y la tabla no tiene columna para guardarlo. El problema concreto: cuando Serato o Rekordbox reescriben las etiquetas de un WAV, el tamaño a menudo **no cambia** porque el chunk ID3 se rellena con padding. Un archivo que el DJ reemplazó por otra versión del mismo tamaño también pasa desapercibido.
 
-## 02. Precisión del motor
+**Arreglo**Añadir `mtime_utc` y `fingerprint` (blake3 de los primeros y últimos 2 MB) a la tabla y a la clave. `blake3` ya está declarado como dependencia de `bdja_scan` y **todavía no se usa para nada** — es la pieza que falta para esto y para el dedupe de duplicados, que en una biblioteca de DJ ahorra del 15 al 30 % del trabajo.
 
-Nueve defectos que no impiden que la app funcione, pero que hacen que sus números no signifiquen lo que dicen significar. Ordenados por cuánto ensucian el veredicto.
+#### \*\*N-3\*\* Los tests nuevos usan espectros de líneas, no espectros de música \`bdja_dsp/tests/dsp_tests.rs\`
 
-| Sev        | Qué                                                      | Dónde                               | Por qué importa                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-|------------|----------------------------------------------------------|-------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| \*\*P1\*\* | E14 mide la cosa equivocada                              | temporal.rs · verdict/engine.rs     | `temporal_variance` es el coeficiente de variación de la *energía* entre ventanas, o sea la dinámica de la música. El plan pedía la varianza de *las evidencias* entre tramos. Resultado: una pista dinámica (intro suave, drop fuerte) se penaliza un 50 % aunque el transcode sea evidente, y un master de loudness-war plano nunca se penaliza.                                                                                                        |
-| \*\*P1\*\* | E05 autocorrela ventanas no contiguas                    | temporal.rs                         | Concatena 4 ventanas de 8192 de posiciones distintas y autocorrela el resultado buscando periodicidad de 576/1024. Cada unión introduce una discontinuidad artificial. La rejilla de tramas hay que buscarla **dentro** de cada bloque contiguo y promediar los picos, no en la concatenación.                                                                                                                                                            |
-| \*\*P1\*\* | E06 no es invariante a ganancia                          | temporal.rs                         | El pre-eco se detecta con umbrales absolutos (`energy_post > 0.05`) sobre sumas de cuadrados sin normalizar. Una pista mezclada 6 dB más baja nunca dispara E06. El plan lo tenía como propiedad verificable con proptest («invariante a ganancia»); ese test no existe.                                                                                                                                                                                  |
-| \*\*P1\*\* | E07 no separa por banda                                  | stereo.rs                           | La «correlación de banda alta» es la correlación de la primera diferencia de la señal completa, no de una banda por encima de un cruce. Y el cruce reportado es `Some(14000)` fijo, inventado. Sirve como indicio grueso; no como una de las cuatro evidencias fuertes que autorizan a acusar.                                                                                                                                                            |
-| \*\*P1\*\* | Lo que se llama LUFS no es LUFS                          | quality.rs                          | `-0.691 + 10·log10(mean²)` es RMS con el offset de R128 pegado encima: sin filtro K-weighting y sin *gating* de −70/−10 LU. Puede desviarse varios dB del valor real, que es justo la cifra que un DJ compara contra el objetivo de una plataforma. El plan especificaba la crate `ebur128`; no está en las dependencias. Lo mismo con el true peak, que es `pico × 1,05` — un 0,4 dB a ojo, sin el sobremuestreo 4× que el propio comentario dice hacer. |
-| \*\*P1\*\* | Métricas de nivel calculadas sobre 0,7 s y en mono       | dsp/pipeline.rs · decoder.rs        | `analyze_quality` recibe la concatenación de 4 ventanas: 32 768 muestras ≈ 0,74 s. LUFS integrado, rango dinámico y piso de ruido de una pista entera se calculan sobre menos de un segundo. Y el clipping y el pico se miden sobre la mezcla mono `(L+R)/2`, que atenúa picos y esconde clipping de un solo canal.                                                                                                                                       |
-| \*\*P1\*\* | E09 (bit depth real) no está implementado                | decoder.rs · quality.rs             | `BitDepthStats` se rellena con `estimated_real_bits = declared` y `zero_lsb_ratio = 0.0`: código muerto. La estimación real la hace `quality.rs` a partir de la muestra no nula más pequeña, que es una medida de un solo valor extremo, no un piso. El plan pedía la entropía y distribución de los LSB, que es lo que de verdad detecta un 24 bits inflado.                                                                                             |
-| \*\*P1\*\* | Archivo silencioso o muy bajo → «Probablemente lossless» | decoder.rs · spectrum.rs            | Las ventanas con `energy <= 0.0001` se descartan; si se descartan todas, `analyze_spectrum` devuelve sus valores por defecto, que son *ancho de banda = Nyquist* y *0 huecos*. Suma ≈ −3,2 → veredicto «Probablemente lossless» con 70-85 % de confianza sobre un archivo del que no se midió nada. Falla abriendo. Debe fallar cerrando: *Inconcluso* explícito con la guarda correspondiente.                                                           |
-| \*\*P2\*\* | Dos fuentes de verdad para «evidencia fuerte»            | dsp/pipeline.rs · verdict/engine.rs | El DSP devuelve un `bool is_strong_evidence_present` y el motor de veredicto recalcula su propia lista con `llr >= 1.5`. Pueden discrepar. Además `E13.value` se rellena con ese `bool` global, así que un archivo sin ningún hallazgo de metadata puede guardar `E13 = 1.0` en el reporte exportado. Una sola función debe decidirlo, en `bdja_verdict`.                                                                                                 |
+Los cinco tests de DSP construyen las señales como sumas de senoides en kilohercios enteros (`for f_khz in 1..=16`). Eso es un espectro de líneas: energía en 16 bins y silencio entre ellos. La detección de bordes, los huecos espectrales y el piso de ruido se comportan de forma completamente distinta con un espectro continuo, que es lo que tiene la música.
 
-## 03. Los falsos positivos que te van a costar clientes
+Por eso el defecto de la §02 no lo detecta ningún test. Y `test_dsp_natural_band_limited_guard` tiene su aserción dentro de un `if output.effective_bandwidth_hz < 20000`, así que **pasa igual si el ancho de banda sale bien o sale mal**: es un test que no puede fallar por lo que lleva en el nombre.
 
-Esta sección la separo porque no es deuda técnica: es el escenario concreto en el que la app acusa a un DJ honesto delante de su proveedor. Vale más que cualquier optimización.
+**Arreglo**Un generador de señal con forma de música (ruido filtrado con pendiente configurable en dB/oct más piso de dither de 16 bits) y estos tres tests, que son los que faltan: lossless de banda completa debe medir ≥ 20 500 Hz; el mismo material con lowpass a 16 kHz debe medir 16 000 ± 300; y un lossless de banda completa debe alcanzar el veredicto *Lossless verificado*. Y quitar el `if` de la aserción del guard.
 
-#### \*\*P0-6\*\* Un WAV convertido con FFmpeg se marca como transcode probable \`bdja_decode/src/forensic.rs\`
+| ID   | Hallazgo                                                | Detalle                                                                                                                                                                                                                                                                                                                                               |
+|------|---------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| N-4  | \*\*P1\*\* El CLI no tiene `calibrate`                  | `bdja_cli` pasó de 74 bytes a un binario real con `analyze`, `scan`, `version` y `help`: muy útil y bien hecho. Pero sin `calibrate` ni `validate` no hay forma de ajustar los pesos LLR contra datos ni de medir la tasa de falsos positivos. Sigue siendo la brecha más grande del proyecto.                                                        |
+| N-5  | \*\*P1\*\* El recorrido sigue en dos fases              | `scan_collection` recorre *todo* el árbol a un `Vec` antes de analizar el primer archivo. En un disco completo eso son minutos con la barra en cero y `total_found` en 0, porque `on_progress` no se llama durante el descubrimiento. Falta solapar walk y análisis con una cola acotada.                                                             |
+| N-6  | \*\*P1\*\* La cola de reportes pendientes no tiene tope | `pending_reports` acumula todos los `FileReportFfi` hasta que la UI hace *poll*. Cada uno lleva 256 `f32` de espectro más las cadenas: alrededor de 1,5 KB. Si el escaneo va más rápido que la UI —o si la UI se queda en segundo plano— en 100 000 archivos son cientos de megas. Hay que acotarla y, pasado el tope, dejar que la UI lea de SQLite. |
+| N-7  | \*\*P2\*\* Los jobs no se eliminan nunca                | `ACTIVE_JOBS` guarda cada `ScanJob` para siempre; nada lo limpia al completarse. Fuga pequeña y acotada, pero fuga.                                                                                                                                                                                                                                   |
+| N-8  | \*\*P2\*\* Sin reanudación                              | No hay tabla `scan_job` ni checkpoints. Si la app se cierra en el archivo 38 000 de 50 000, la caché evita repetir el análisis pero el recorrido completo del disco se vuelve a hacer desde cero y el usuario no recupera el trabajo «en curso».                                                                                                      |
+| N-9  | \*\*P2\*\* Migraciones sin versión                      | Las migraciones son `ALTER TABLE … ADD COLUMN` con el error ignorado. Funciona para añadir columnas, pero no permite migraciones de datos ni detectar que la base viene de una versión posterior. Falta `PRAGMA user_version`.                                                                                                                        |
+| N-10 | \*\*P2\*\* La UI fija `throttleMode: 'turbo'`           | Los tres modos existen en el motor y funcionan (turbo = todos los núcleos, normal = mitad acotada a 2-8, silent = 1). La UI manda siempre turbo, así que la app usa todos los núcleos del DJ sin preguntarle — justo lo contrario de tu preocupación por no desgastar el equipo. Es un selector de tres botones.                                      |
 
-El análisis forense busca la cadena `"Lavf"` en los primeros 64 KB del archivo. Si la encuentra, rellena `encoder_string`. Y en `dsp/pipeline.rs`, E13 es: `if has_xing_lame || encoder_tag.is_some()` → **LLR +3,5 y evidencia fuerte**, que es la puerta que autoriza el veredicto «Probable transcode».
+## 04. Deuda de la pasada anterior que sigue ahí
 
-`Lavf` es la firma de libavformat, o sea de FFmpeg. La escribe cualquier conversión hecha con FFmpeg, incluidas las perfectamente legítimas: pasar un master de 24 bits a 16 bits, cambiar 48 kHz a 44,1 kHz, recortar un intro, normalizar. **Nada de eso implica una fuente con pérdida.** Con el bug P0-2 sumando +2,2 por E01, un WAV legítimo pasado por FFmpeg llega a «Probable transcode» con más del 90 % de confianza.
+No son bloqueantes, pero son la diferencia entre «funciona» y «los números son defendibles».
 
-**Arreglo**Separar en tres cosas que hoy están juntas: (a) *cabecera Xing/Info de trama MP3* y *tag LAME3.x* dentro de un contenedor lossless → sí es evidencia fuerte; (b) *nombre de software de conversión* (Lavf, SoX, Audacity, iTunes) → como máximo informativo, LLR 0,0, y se muestra como dato del archivo, no como acusación; (c) *extensión que no corresponde al contenedor real* → fuerte, correcto como está. Y nunca buscar firmas por `find_subsequence` en 64 KB en bruto: hay que parsear el chunk o el bloque de metadata correspondiente, porque una cadena suelta puede aparecer dentro del título de una canción.
+| Asunto                                                                  | Estado              | Nota                                                                                                                                                                                                                                                                                                                                              |
+|-------------------------------------------------------------------------|---------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| E14 mide la dinámica de la música, no la consistencia de las evidencias | \*\*Sin cambios\*\* | `bdja_verdict/src/engine.rs` no se tocó en esta actualización. Una pista dinámica sigue perdiendo el 50 % del score.                                                                                                                                                                                                                              |
+| E05 autocorrela 4 ventanas concatenadas de posiciones distintas         | \*\*Sin cambios\*\* | Sigue el `windows_8192.iter().take(4)`. Ahora es más grave: con el *seek* arreglado, esas 4 ventanas vienen de tramos *muy* separados de la canción, así que las 3 uniones artificiales son peores que antes. La rejilla hay que buscarla dentro de cada bloque contiguo y promediar.                                                             |
+| E06 no es invariante a ganancia                                         | \*\*Sin cambios\*\* | `energy_post > 0.05` absoluto. Una pista 6 dB más baja nunca dispara pre-eco.                                                                                                                                                                                                                                                                     |
+| Lo que se llama LUFS no es LUFS                                         | \*\*Sin cambios\*\* | Sigue siendo `−0,691 + 10·log10(media cuadrática)`: sin K-weighting y sin *gating*. `ebur128` no está en las dependencias. El true peak sí mejoró.                                                                                                                                                                                                |
+| Métricas de nivel sobre 0,74 s y en mono                                | \*\*Sin cambios\*\* | `mono_slice` sigue siendo `take(4)` de ventanas: 32 768 muestras. LUFS integrado y rango dinámico de una pista entera medidos sobre menos de un segundo, y el clipping sobre la mezcla `(L+R)/2`, que esconde el recorte de un solo canal.                                                                                                        |
+| E09 (bit depth real) es un placeholder                                  | \*\*Sin cambios\*\* | `BitDepthStats` se sigue construyendo con `estimated_real_bits = declared` y `zero_lsb_ratio = 0.0`, y nadie lo lee. Falta la entropía de los LSB, que es lo que detecta de verdad un 24 bits inflado.                                                                                                                                            |
+| Dos fuentes de verdad para «evidencia fuerte» y `E13.value` contaminado | \*\*Sin cambios\*\* | `E13.value` se sigue rellenando con el `bool` global, así que un archivo sin hallazgo de metadata puede guardar `E13 = 1.0` en el reporte exportado.                                                                                                                                                                                              |
+| Código muerto y duplicado                                               | \*\*Parcial\*\*     | `analyze_file_quick` sigue siendo un alias literal. `scan_directory` (la vieja, secuencial) sigue en `scanner.rs` sin que nadie la llame. `scan_directory_audio` sobrevive como segundo camino, aunque al menos ahora delega en `scan_collection`. `rubato` se añadió a las dependencias de `bdja_dsp`; conviene comprobar que se usa o quitarlo. |
+| Sin CI, sin firma, sin notarización, sin fuzzing                        | \*\*Parcial\*\*     | Apareció `distribution/installer.iss`, que es un paso real. Siguen faltando `.github/workflows/`, el certificado EV de Windows, el Developer ID y la notarización de Apple, el empaquetado de macOS, `cargo-deny`/`cargo-audit`/SBOM y `cargo-fuzz`.                                                                                              |
+| Sin i18n ni reporte PDF                                                 | \*\*Sin cambios\*\* | El reporte PDF de reclamo sigue siendo, para mí, la función con mejor relación valor/esfuerzo de toda la lista.                                                                                                                                                                                                                                   |
 
-#### \*\*P0-7\*\* La biblioteca etiquetada con Serato o Rekordbox se marca como anómala \`bdja_decode/src/forensic.rs · dsp/pipeline.rs\`
+## 05. ¿Es código a nivel senior?
 
-`has_anomalous_id3_in_wav` se activa al encontrar `"id3 "` o `"ID3 "` dentro de un RIFF/WAV, y eso aporta LLR +2,0 con el texto «Chunk ID3 anómalo».
+El código **nuevo** de esta pasada, en su mayoría sí. Lo diría en una revisión de PR sin reservas sobre: el mapeo explícito de códecs con su test, el *seek* con camino de respaldo, el job asíncrono con `AtomicU64` para el progreso y token de cancelación consultado dentro del bucle paralelo, el biquad del joint-stereo con barrido de cruces candidatos, el protocolo IPC con marcos, y el hecho de que los seis arreglos vinieran *con tests*. Eso es oficio.
 
-El problema: **Serato y Rekordbox escriben chunks ID3 dentro de los WAV** para guardar cue points, beatgrid y metadatos. Es el estado normal de casi cualquier WAV en el disco de un DJ que trabaja. Tu público objetivo es precisamente el que tiene toda su biblioteca así. Un ID3 en un WAV no dice nada sobre compresión previa; es la herramienta de cabina haciendo su trabajo.
+Lo que un revisor senior marcaría como bloqueante no es el estilo, son tres decisiones:
 
-**Arreglo**Quitar E13-ID3 de la fusión de procedencia. Reconocer los chunks conocidos de Serato (`Serato Markers2`, `Serato Overview`) y de Rekordbox y mostrarlos como información útil («etiquetado con Serato») — que además es un detalle que a un DJ le gusta ver. Un chunk ID3 solo merece una nota si contiene, dentro, un tag de encoder con pérdida.
+- **Una función de seguridad que finge.** `deriveCapabilityToken` ignorando sus dos parámetros no es un bug menor: es una función cuyo nombre afirma algo que no hace, y el que la lea en seis meses va a creerle. Lo mismo con `bdja_ipc` sin conectar.
+- **Un test que no puede fallar.** La aserción dentro del `if` en el test del guard. Es peor que no tener el test, porque da cobertura falsa.
+- **Un motor de decisión sin calibrar.** Umbrales y pesos escritos a mano en un producto que emite juicios sobre el trabajo de terceros. La ingeniería está bien; lo que falta es la evidencia de que los números son correctos.
 
-#### \*\*P1\*\* Falta la guarda más importante del plan: material band-limited por origen \`dsp/pipeline.rs\`
+Y una observación de proceso, que es la que más te va a ahorrar tiempo: esta actualización tocó 20 archivos a la vez, resolvió seis bloqueantes e introdujo tres hallazgos nuevos, dos de ellos dentro de los propios arreglos (el `hf_floor` del detector de borde y el IPC sin conectar). Eso pasa cuando se arregla todo en una tanda sin un criterio de aceptación por arreglo. Las fases del plan existen justamente para eso: cerrar una, comprobarla contra su criterio, y solo entonces abrir la siguiente.
 
-Hay tres guardas implementadas: duración \< 20 s, nivel muy bajo y sample rate ≤ 32 kHz. Falta justo la que el plan marcaba como crítica: **contenido con poca energía de alta frecuencia por su propia naturaleza** — vinilo, cinta, grabaciones antiguas, AM, una voz sola, pads suaves, un master con lowpass intencional. Sin esa guarda, el catálogo clásico de BDJ LATAM (remixes de temas viejos, ediciones de vinilo) entra directo a la zona de acusación.
+## 06. Qué falta exactamente para producción
 
-**Arreglo**Guarda por *forma* del espectro, no por nivel: si por encima del corte estimado la caída es progresiva en lugar de vertical (E02 bajo), o si la energía entre 8 y 16 kHz ya es muy baja respecto a la banda media *sin* borde definido, el techo del veredicto es Sospechoso salvo que aparezca E04, E05 o E13-fuerte.
+Cuatro tandas. La primera es corta y desbloquea todo lo demás.
 
-## 04. Brechas contra el plan
+T1 — Cerrar los dos bloqueantes abiertos1-2 días
 
-Las 21 secciones del plan, una por una, con lo que hay hoy.
+E01 como detector de borde (§02), con los tres tests que faltan y el generador de señal con forma de música. Gate de capacidad real: HMAC sobre `hwid ‖ engine_rev ‖ ventana` en Dart y la misma verificación en Rust con comparación en tiempo constante. Y decidir el IPC: conectarlo con timeout, o retirarlo y usar `catch_unwind`.
 
-| §   | Sección del plan          | Estado          | Qué falta concretamente                                                                                                                                                                                                                                                                                             |
-|-----|---------------------------|-----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 01  | Requisitos y presupuestos | \*\*Parcial\*\* | Ningún presupuesto de §01 se mide. No hay benchmarks ni test de latencia; el tope de 1 000 archivos hace inalcanzable el objetivo de 50 000.                                                                                                                                                                        |
-| 02  | Decisiones (ADR)          | \*\*Ausente\*\* | No existe `docs/adr/`. Tres ADRs se incumplen en el código (06 workers aislados, 08 muestreo estratificado, 10 gate de capacidad).                                                                                                                                                                                  |
-| 03  | Stack tecnológico         | \*\*Parcial\*\* | Symphonia 0.5 en vez de 0.6.1. Faltan `ebur128`, `rubato`, `memmap2`, `zeroize`, `rayon`, `pdf`. `crossbeam` y `blake3` declarados pero sin usar. `flutter_lints` en vez de `very_good_analysis`, y `deprecated_member_use: ignore` global.                                                                         |
-| 04  | Topología de tres anillos | \*\*Ausente\*\* | `bdja_worker` imprime su versión (77 bytes) y `bdja_ipc` está vacío (21 bytes). Todo decodifica en el proceso de la app. Con `panic = "abort"` en release, un archivo malformado de un USB tumba la aplicación entera en mitad de un escaneo.                                                                       |
-| 05  | Workspace de 10 crates    | \*\*Hecho\*\*   | Los 10 crates existen con los nombres y las dependencias correctas. `bdja_cli` es un stub de 74 bytes, así que no hay herramienta de calibración.                                                                                                                                                                   |
-| 06  | Pipeline de 7 etapas      | \*\*Parcial\*\* | Etapas 1, 2, 4, 5 y 6 están. Falta la 0 (triage con caché) y la 3 está mal (sin *seek*, ver P0-3). Ninguna salida temprana por caché.                                                                                                                                                                               |
-| 07  | Catálogo de 14 evidencias | \*\*Hecho\*\*   | Las 14 existen con sus códigos, pesos y textos. La calidad de cada medida es otra cosa: ver §02 y §03 de este informe.                                                                                                                                                                                              |
-| 08  | Motor de veredicto        | \*\*Hecho\*\*   | Los 6 estados, los umbrales, la puerta de evidencia fuerte y el veto de guardas están implementados fielmente. Hoy es inalcanzable por P0-1.                                                                                                                                                                        |
-| 09  | Calibración y dataset     | \*\*Ausente\*\* | Sin corpus, sin `bdja calibrate`, sin gates de CI. Los pesos LLR son valores escritos a mano. **Esta es la brecha más grande que queda después de arreglar los P0.**                                                                                                                                                |
-| 10  | Escaneo masivo            | \*\*Parcial\*\* | Enumeración de volúmenes en Windows: bien hecha, con `GetDriveTypeW` y exclusión de CD. Todo lo demás: ver P0-5. Sin rutas largas `\\?\`, sin protección de ciclos/symlinks.                                                                                                                                        |
-| 11  | Persistencia              | \*\*Parcial\*\* | Una tabla plana en vez del esquema de 5 tablas. Sin `mtime` ni huella → sin caché. Sin `scan_job` → sin reanudación. Sin migraciones ni `user_version`: el próximo cambio de esquema rompe las bases existentes. Filtros construidos por interpolación de strings en el SQL (escapados, pero deben ser parámetros). |
-| 12  | Contrato FFI              | \*\*Parcial\*\* | Hay 11 funciones en vez de las 9 del contrato, y falta la clave: `scan_events` como `Stream`. `analyze_file_quick` es un alias literal de `analyze_file` — la duplicación que pediste no tener. Sin `verify_contracts.py`.                                                                                          |
-| 13  | Interfaz                  | \*\*Parcial\*\* | Activación, home con arrastre, unidades listadas, tabla de resultados, ficha de evidencias y export CSV/JSON: hechos y con buen aspecto. Faltan reporte PDF «Verify Remix», i18n es/en (no hay `app_strings`), progreso real, cancelación real y los modos Simple/Analyzer/Forensic.                                |
-| 14  | Licenciamiento SPP3       | \*\*Hecho\*\*   | `BdjProduct.audioAnalyzer` añadido al paquete compartido, verificación real con `Spp3Token.verify`, HWID V2, almacén seguro, control de reloj hacia atrás. Dos pegas: el gate de capacidad es falso (§05) y no hay revalidación periódica cada 6 h.                                                                 |
-| 15  | Seguridad                 | \*\*Ausente\*\* | Sin fuzzing, sin `cargo-deny`/`cargo-audit`, sin SBOM, sin aislamiento de proceso, sin firma ni notarización. Ver §05 de este informe.                                                                                                                                                                              |
-| 16  | Bajos recursos            | \*\*Parcial\*\* | `get_fft_processor()` se llama *dentro* de cada análisis: se crea un planner de FFT y se recalculan las tablas Hann de 8192 y 1024 por cada archivo. En un lote de 50 000, 50 000 veces. Un solo núcleo activo. Sin modos de intensidad.                                                                            |
-| 17  | Testing                   | \*\*Parcial\*\* | 6 tests en total: 2 de DSP, 2 de veredicto, 2 de UI (uno de los cuales solo comprueba constantes de color). Sin proptest, sin golden/insta, sin fuzz, sin tests de decode, scan o store, sin cobertura. El test de ancho de banda valida el bug P0-2.                                                               |
-| 18  | CI/CD y distribución      | \*\*Ausente\*\* | No hay `.github/workflows/` ni `distribution/`. Sin Inno Setup, sin DMG, sin notarización. `tools/build_native.ps1` está bien hecho, pero es un script local de Windows, no un pipeline.                                                                                                                            |
-| 19  | Roadmap                   | \*\*Parcial\*\* | Se implementaron partes de F1 a F6 en paralelo en lugar de cerrar fases con criterios de aceptación. Por eso hay UI de F6 encima de un motor de F3 sin validar.                                                                                                                                                     |
-| 20  | Riesgos                   | \*\*Ausente\*\* | El riesgo nº1 del plan («falso positivo que hace acusar injustamente») se materializó por dos vías: Lavf y ID3 de Serato. Ver §03.                                                                                                                                                                                  |
-
-### Código muerto y duplicado
-
-Lo separo porque pediste expresamente cero código muerto, redundante o de dobles llamadas:
-
-- `ScanEvent`, `ScanOptions`, `VolumeInfo.id` sin uso real, y `EngineInfo` duplicado entre `bdja_core` y `bdja_ffi` (`EngineInfoFfi`, `VolumeInfoFfi`, `FormatFactsFfi`… seis structs espejo).
-- `ENGINE_REV` declarado dos veces, en `bdja_core::types` y en `bdja_ffi::api`: pueden divergir, y de ese número depende la invalidación de caché.
-- `analyze_file_quick` → `analyze_file`: alias sin diferencia.
-- `bdja_ipc` (21 bytes), `bdja_worker` (77 bytes), `bdja_cli` (74 bytes): tres crates que solo ocupan sitio en el workspace y en el instalador — `build_native.ps1` copia los dos `.exe` a la carpeta de la app.
-- `BitDepthStats` se construye con valores fijos y nadie lo lee.
-- `bdja_scan::scan_directory` (con su `cancel_token` y sus callbacks de progreso) existe y está razonablemente escrita, pero la app llama a `scan_directory_audio` del FFI, que reimplementa el walk sin cancelación ni progreso. Dos caminos para lo mismo, y el bueno es el que no se usa.
-- `frontend/logs/2026-09-11.log`: log de `flutter_rust_bridge_codegen` dejado en el repo (está en `.gitignore`, pero sigue en el disco).
-
-## 05. Seguridad y licenciamiento
-
-#### \*\*P0-8\*\* El gate de capacidad no gatea nada \`license_manager.dart · bdja_ffi/src/api.rs\`
-
-En Dart:
-
-    String deriveCapabilityToken(String hwid, int engineRev) {
-      final key = utf8.encode('BDJ_AUDIO_ANALYZER_CAPABILITY_SALT_2026');
-      final message = utf8.encode('::::');        // ← hwid y engineRev no se usan
-      final hmac = Hmac(sha256, key);
-      return hmac.convert(message).toString();
-    }
-
-El HMAC se calcula sobre la cadena literal `'::::'`: los parámetros se ignoran. Se ve que era una interpolación que perdió sus variables. El token resultante es **una constante idéntica en todas las máquinas y todas las versiones**.
-
-Y en Rust, `engine_init` solo comprueba `if capability_token.trim().is_empty()`. Cualquier cadena no vacía inicializa el motor. Es decir: el ADR-10 completo — que el `.dll` no sea usable si alguien lo extrae del instalador — hoy se salta escribiendo `"x"`.
-
-**Arreglo**Dart: `Hmac(sha256, salt).convert(utf8.encode('$hwidHash::$engineRev::$ventana'))` con una ventana de tiempo redondeada (p. ej. hora UTC). Rust: recalcular el mismo HMAC con el `deviceHash` que obtiene por su cuenta y comparar en tiempo constante, aceptando la ventana actual y la anterior. Y el salt no debería estar en texto plano en el Dart — al menos ofuscarlo y moverlo al lado nativo, que es más costoso de leer.
-
-| Sev        | Asunto                              | Situación                                                                                                                                                                                                                                   |
-|------------|-------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| \*\*P0\*\* | Aislamiento de decodificación       | No existe. Con `panic = "abort"`, un WAV malformado del USB de otro DJ cierra la app y se pierde el escaneo en curso. Es el modelo de amenaza principal de esta aplicación y está sin cubrir.                                               |
-| \*\*P0\*\* | Fuzzing del decodificador           | Sin `cargo-fuzz`, sin corpus de archivos mutados. Symphonia en Rust puro reduce mucho el riesgo de ejecución de código, pero no el de pánico o bucle infinito.                                                                              |
-| \*\*P1\*\* | Límites y timeouts por archivo      | Solo hay el tope de 2 GB / 3 h y un presupuesto implícito de 4 000 paquetes. Sin timeout por archivo ni tope de RAM.                                                                                                                        |
-| \*\*P1\*\* | Base de datos en memoria silenciosa | Si `ReportStore::open` falla, `engine_init` cae a una base en memoria **sin avisar**. El usuario escanea 20 000 archivos, cierra la app y lo pierde todo sin explicación.                                                                   |
-| \*\*P1\*\* | SQL por interpolación               | `list_reports` concatena el filtro y la búsqueda en el SQL. Está escapado con `replace("'","''")`, así que no es inyectable de forma trivial, pero deben ser parámetros enlazados; además `%` y `_` en la ruta se comportan como comodines. |
-| \*\*P1\*\* | Revalidación de licencia            | Solo al arrancar. El plan pedía cada 6 h de sesión abierta.                                                                                                                                                                                 |
-| \*\*P1\*\* | Firma de código                     | Sin certificado EV de Windows ni Developer ID de Apple. Un instalador sin firmar dispara SmartScreen y Gatekeeper, y para un producto de pago eso es letal en la primera impresión.                                                         |
-| \*\*P2\*\* | Auditoría de dependencias           | Sin `cargo-deny`, `cargo-audit` ni SBOM. Con licencia `Proprietary` declarada, conviene verificar que ninguna dependencia arrastre GPL.                                                                                                     |
-| \*\*OK\*\* | Sin red                             | Correcto: no hay ninguna dependencia de HTTP/TLS en el árbol del motor. Falta el test que lo garantice de forma permanente.                                                                                                                 |
-| \*\*OK\*\* | Solo lectura                        | Correcto: el motor abre los archivos del usuario en solo lectura y escribe únicamente en el directorio de datos de la app.                                                                                                                  |
-
-## 06. Rendimiento frente a los presupuestos
-
-| Presupuesto del plan           | Objetivo         | Hoy                   | Causa                                                                                      |
-|--------------------------------|------------------|-----------------------|--------------------------------------------------------------------------------------------|
-| Lote de 50 000 archivos        | ≤ 5 h            | imposible             | tope de 1 000 archivos en la llamada                                                       |
-| Rendimiento de lote            | ≈ 3 arch/s       | ≈ 0,7 arch/s          | un solo hilo (dividido por `cores−1`)                                                      |
-| Re-análisis sin cambios        | ≤ 2 % del tiempo | 100 %                 | la caché no se consulta nunca                                                              |
-| Latencia de UI durante escaneo | 60 fps           | probablemente OK      | FRB ejecuta en hilo aparte, pero el resultado llega en un solo `setState` con todo el lote |
-| Arranque en frío               | ≤ 1,2 s          | sin medir             | —                                                                                          |
-| RSS en escaneo                 | \< 250 MB        | sin medir, con riesgo | todas las rutas en un `Vec` y todos los reportes del lote en RAM antes de devolverlos      |
-| Coste por archivo              | ≤ 900 ms         | sin medir             | se paga un planner de FFT nuevo por archivo; se decodifican 6 s en vez de 12 tramos        |
-
-Ninguno de estos números está instrumentado, así que no son medidas: son consecuencias deducidas del código. El primer paso no es optimizar, es poner los benchmarks de `criterion` y el test de presupuesto de latencia para que dejen de ser deducciones.
-
-## 07. Lo que está bien hecho
-
-Conviene decirlo con la misma precisión, porque marca lo que no hay que tocar.
-
-- **La estructura del workspace.** Los 10 crates con sus responsabilidades y dependencias apuntando hacia abajo, sin ciclos. Añadir el escaneo real y los workers encaja sin mover nada.
-- **El licenciamiento.** Es la parte más madura de la aplicación: producto añadido al `bdj_license_core` compartido, verificación SPP3 completa con clave raíz, código de producto, versión exacta y HWID V2, almacén seguro del sistema, y hasta un control de reloj hacia atrás que no estaba en el plan. Coherente con el resto de la suite.
-- **La enumeración de volúmenes en Windows.** `GetLogicalDriveStringsW` + `GetDriveTypeW` + `GetVolumeInformationW` + `GetDiskFreeSpaceExW`, con clasificación de extraíble/fijo/red y exclusión de unidades CD. Bien hecho y con UTF-16 tratado con cuidado.
-- **El catálogo de evidencias como modelo de datos.** `EvidenceCode` con `is_strong()` y `label()`, `Evidence` con `llr`, `applicable` y `description` por separado: es exactamente la estructura que hace posible la explicabilidad. Muchas herramientas del sector no la tienen.
-- **El motor de veredicto.** Traduce fielmente la §08: umbrales, puerta de evidencia fuerte, veto de guardas, confianza por sigmoide y texto en lenguaje natural. Cuando llegue a ejecutarse, funciona.
-- **La identidad visual.** La paleta cian eléctrico sobre azul medianoche sacada del logo es una decisión mejor que mi propuesta de negro y rojo: para una herramienta de análisis espectral, el cian sobre oscuro es el lenguaje del instrumento, y distingue el producto del resto de la suite sin salirse de la marca.
-- **`tools/build_native.ps1`**: codegen, build en release y copia de artefactos, con `$ErrorActionPreference = 'Stop'` y comprobación de artefactos faltantes. Es la base del futuro workflow de CI.
-
-## 08. Plan de trabajo
-
-Cinco tandas. La primera es la única que hay que hacer antes de enseñarle la app a nadie.
-
-T1 — Que el motor exista de verdad2-3 días
-
-P0-1 (enum de códecs), P0-2 (ancho de banda por borde de contenido), P0-3 (*seek* a 12 tramos), P0-4 (espectro real de punta a punta), P0-6 y P0-7 (separar metadata informativa de evidencia fuerte: Lavf y ID3 fuera de la fusión).
-
-**Criterio de aceptación**Un WAV lossless da *Lossless verificado*; el mismo tema en MP3 320 → WAV da *Probable transcode*; un WAV convertido con FFmpeg desde un master de 24 bits sigue dando *Lossless verificado*; un WAV etiquetado con Serato sigue dando *Lossless verificado*; y el espectro en pantalla cambia entre dos archivos distintos con el mismo corte.
+**Criterio de aceptación**Un WAV lossless de banda completa reporta ≥ 20 500 Hz y sale *Lossless verificado*; el mismo tema en MP3 320 → WAV reporta ~20 500 y sale *Probable transcode*; `engine_init("x", …)` falla; y un archivo corrupto no cierra la app.
 
 T2 — Corpus y calibración3-4 días
 
-Implementar `bdja_cli` de verdad (`analyze`, `scan`, `calibrate`, `validate`), generar la matriz de transcodes con tus propios masters, ajustar los pesos LLR contra datos en lugar de a mano, y meter los gates de la §09 en CI.
+`bdja_cli calibrate` y `validate`, matriz de transcodes generada con tus masters, pesos ajustados contra datos, y los umbrales del §09 del plan como gate de CI.
 
-**Criterio de aceptación**FPR \< 1 % sobre lossless genuino y recall \> 95 % en MP3 ≤ 256 kbps, medido por un comando reproducible y no por impresión. Hasta que esto exista, ningún número de confianza que muestre la app significa nada.
+**Criterio de aceptación**FPR \< 1 % sobre lossless genuino y recall \> 95 % en MP3 ≤ 256 kbps, medidos por un comando reproducible. Hasta aquí, ningún porcentaje de confianza que muestre la app significa nada.
 
-T3 — Escaneo masivo real4-5 días
+T3 — Escaneo de grado producción2-3 días
 
-P0-5 completo: `scan_start` + `Stream<ScanEvent>`, pool de `cores−1`, cola acotada, huella blake3 para caché y dedupe, `scan_job` con checkpoints, cancelación real, modos de intensidad, sin tope de archivos. Migraciones y `user_version` en SQLite. Progreso y cancelación de verdad en la UI.
+`mtime` y huella blake3 en la clave de caché, dedupe de duplicados, walk y análisis solapados con cola acotada y progreso desde el primer segundo, tope en la cola de reportes, limpieza de jobs terminados, `scan_job` con checkpoints para reanudar, `user_version` en SQLite, selector de intensidad en la UI y recuento de errores visible.
 
-**Criterio de aceptación**50 000 archivos con la app matada dos veces a mitad: al reanudar no se repite ni se pierde ninguno, el RSS se mantiene por debajo de 250 MB y el segundo pase sobre lo ya escaneado tarda menos del 5 %.
+**Criterio de aceptación**50 000 archivos con la app matada dos veces: reanuda sin repetir ni perder, RSS por debajo de 250 MB durante todo el proceso, y la barra de progreso se mueve desde el primer segundo.
 
-T4 — Precisión y limpieza3-4 días
+T4 — Precisión, limpieza y distribución4-5 días
 
-Los nueve puntos de la §02: E14 sobre evidencias, E05 por bloque contiguo, E06 normalizado, E07 por banda real, `ebur128` para LUFS y true peak conformes, métricas sobre la pista entera y por canal, E09 por LSB, fallo cerrado en archivos sin medida. Planner de FFT cacheado. Una sola fuente para «evidencia fuerte». Borrar el código muerto y los alias. La guarda de material band-limited.
+La deuda del §04: E14 sobre evidencias, E05 por bloque contiguo, E06 normalizado, `ebur128` para LUFS y métricas sobre la pista entera y por canal, E09 por LSB, una sola fuente para «evidencia fuerte», borrar los alias y las funciones muertas. Reporte PDF, i18n es/en, workflows de CI, firma EV, Developer ID con notarización, empaquetado de macOS, `cargo-deny`/`audit`/SBOM y `cargo-fuzz`.
 
-**Criterio de aceptación**Suite de propiedades en verde: invariancia a ganancia, invariancia a añadir silencio, simetría entre canales idénticos, nunca NaN. Y ni un *warning* de clippy ni un code smell en SonarQube.
+**Criterio de aceptación**Instalador firmado que arranca limpio en un Windows 10 nuevo y en un macOS 12 sin Xcode, sin avisos de SmartScreen ni Gatekeeper, con cero warnings de clippy y cero code smells.
 
-T5 — Endurecimiento y distribución4-5 días
+**Total: 10-14 días** hasta algo que puedas vender sin reservas. Eran 16-21 en la pasada anterior.
 
-Workers en procesos hijo (`bdja_worker` + `bdja_ipc` de verdad), gate de capacidad real, fuzzing, `cargo-deny`/`audit`/SBOM, reporte PDF, i18n es/en, los workflows de GitHub Actions, Inno Setup, DMG con notarización y firma en las dos plataformas.
+## 07. Funcionalidades que le veo
 
-**Criterio de aceptación**Instalador firmado que arranca limpio en un Windows 10 nuevo y en un macOS 12 sin Xcode, sin avisos de SmartScreen ni Gatekeeper, y un archivo corrupto que mata a un worker no interrumpe el escaneo.
+Ordenadas por lo que de verdad mueve la aguja para un DJ que no quiere que lo estafen.
 
-**Total: 16-21 días** hasta algo vendible. La diferencia con el plan original (39 días desde cero) es la medida de lo que ya está construido: más o menos la mitad del camino, y la mitad que suele costar más tiempo.
+| Funcionalidad                                  | Por qué                                                                                                                                                                                                                                                                                     | Valor / esfuerzo |
+|------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------|
+| **Reporte PDF de reclamo**                     | Hash del archivo, veredicto, evidencias con su peso, el espectro real y la versión del motor. Es el único entregable que convierte el análisis en dinero recuperado, y cada uno que circula lleva tu marca.                                                                                 | altísimo / bajo  |
+| **Comparación A/B**                            | Arrastrar el master y la versión recibida, ver las dos curvas superpuestas y la tabla de diferencias. Es la demo que se explica sola y la mejor pieza de marketing posible para este producto.                                                                                              | alto / medio     |
+| **Vigilancia de carpeta**                      | Analizar automáticamente lo que entra en la carpeta de descargas del pool y avisar solo si algo sale sospechoso. Convierte una compra puntual en una herramienta que se queda abierta todos los días.                                                                                       | alto / medio     |
+| **Leer las bibliotecas de Serato y Rekordbox** | Analizar «mi biblioteca» tal como el DJ la ve, devolviendo el resultado por crate o por playlist, en lugar de pedirle que elija carpetas. Nadie en este espacio lo hace, y ya tienes hecha la parte difícil: reconocer y respetar sus metadatos. Solo lectura, nunca escribir en sus bases. | altísimo / alto  |
+| **Espectrograma y modo Forensic**              | Ya estaba planificado para la v1.1 y ahora que el espectro es real tiene sentido. Es lo que pide el productor, no el DJ.                                                                                                                                                                    | medio / medio    |
+| **Detección de Opus y WavPack**                | Symphonia no decodifica Opus. Hoy un Opus transcodeado a WAV se te escapa. Requiere un decoder aparte o FFmpeg como plugin opcional.                                                                                                                                                        | medio / medio    |
+| **Renombrado o etiquetado por veredicto**      | Mover los sospechosos a una carpeta, o escribir el veredicto en un tag. Ojo: tocar los archivos del usuario es la función más peligrosa de la lista; solo con confirmación explícita, jamás automática.                                                                                     | medio / bajo     |
+| **Certificación del catálogo de BDJ LATAM**    | Sigue siendo tu ventaja estructural: analizar cada remix antes de publicarlo y mostrar el veredicto en la ficha de descarga. Ningún competidor puede replicarlo porque ninguno tiene catálogo. Y te da el corpus de calibración más realista que existe.                                    | estratégico      |
 
-## 09. Cómo competir
+## 08. Mejoras que propongo
 
-Spectro cuesta desde 24,99 USD y está dirigido a DJs; AudioAuditor es gratis y de código abierto. Ganarles por precio no se puede y por profundidad de análisis tampoco hace falta. Hay tres cosas que ellos no pueden hacer y tú sí.
+### Del motor
 
-### 1. La ventaja que nadie más tiene: el catálogo
+- **E01 como detector de borde** (§02). Es el cambio con más impacto de toda la lista: arregla el dato que se muestra, desbloquea el veredicto máximo y elimina la dependencia de la guarda.
+- **Un umbral por sample rate.** Hoy las fronteras de E01 (16 500 / 18 500 / 19 800 / 20 500) están escritas suponiendo 44,1 kHz. En un archivo de 48 kHz el Nyquist es 24 kHz y esos números significan otra cosa. Deben expresarse como fracción de Nyquist o tener tabla propia por sample rate.
+- **Guardar la evidencia, no solo el veredicto.** Ya guardas el espectro. El siguiente paso es versionar el `engine_rev` en la UI y poder decir «este archivo se analizó con el motor 3; hay motor 7 disponible, ¿reanalizar?». Es lo que hace que un veredicto viejo no envenene una reclamación.
+- **Presupuesto de tiempo por archivo**, no solo de paquetes. Hoy el tope es «4 000 paquetes» y «60 paquetes por segmento», que en un FLAC de alta resolución significa algo muy distinto que en un MP3.
 
-Ninguna de esas herramientas está conectada a una tienda de remixes. Tú vendes los archivos. Eso abre algo que no es una función, es una posición: **certificar el catálogo de BDJ LATAM con tu propio motor** y mostrar el resultado en cada ficha de descarga — ancho de banda real, veredicto, versión del motor y fecha. Un DJ que compara dos pools elige el que le dice la verdad sobre lo que vende. Spectro no puede replicarlo porque no tiene catálogo; un pool competidor no puede replicarlo porque no tiene motor.
+### Del producto
 
-Y tiene una consecuencia operativa igual de valiosa: el analizador pasa a ser tu control de calidad interno de proveedores. Cada remix que entra al pool se analiza antes de publicarse. Eso te ahorra reclamaciones y te da, gratis, el corpus de calibración más realista que existe: material del mundo real, del género real, de tus proveedores reales.
+- **Que el usuario elija la intensidad** (turbo / normal / silencioso). El motor ya lo soporta; son tres botones y responde directamente a tu preocupación de no maltratar el equipo del DJ.
+- **Mostrar los errores.** Hoy los archivos que fallan al decodificar se descartan en silencio (`Err(_) => return`). El DJ debería ver «38 archivos no se pudieron leer» con la lista, porque a veces *eso* es el hallazgo: un archivo corrupto que compró.
+- **Publicar las cifras.** Cuando T2 esté hecho, poner el recall por códec y el FPR en la web y en la app. «En AAC detectamos el 60 %» genera más confianza que el silencio, y ningún competidor ofrece números verificables.
+- **Que «Inconcluso» se vea como resultado y no como fallo.** Una herramienta que se abstiene cuando no sabe es la que un DJ enseña a su proveedor sin quedar en ridículo.
 
-### 2. Competir en el flujo de trabajo, no en el análisis
+### Del proceso
 
-Las herramientas del sector analizan archivos. El DJ no tiene un problema con un archivo: tiene un problema con 8 000. Ahí es donde se gana:
+- **Un arreglo, un test que falla primero.** Los dos hallazgos nuevos de esta pasada nacieron dentro de los propios arreglos. Escribir el test que falla antes de tocar el código los habría cazado en el momento.
+- **Cerrar fases contra su criterio de aceptación** en vez de avanzar en paralelo. El plan tiene los criterios escritos; usarlos como puerta.
+- **CI ya, aunque sea mínima.** `fmt` + `clippy -D warnings` + `cargo test` + `flutter test` en cada *push*. Con 9 tests nuevos que cubren cosas reales, ya vale la pena que corran solos.
+- **Anotar las decisiones.** `docs/adr/` sigue vacío. Cuando en tres meses te preguntes por qué el IPC existe y no se usa, un ADR de tres líneas te ahorra la arqueología.
 
-| Movimiento                                             | Por qué gana                                                                                                                                                                                                                                                                                                               | Esfuerzo     |
-|--------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
-| **Escaneo de biblioteca entera, reanudable, sin tope** | Es el requisito que ya pusiste como central y es exactamente lo que las alternativas hacen mal o limitan. Es la función que justifica el precio.                                                                                                                                                                           | T3           |
-| **Leer las bibliotecas de Serato y Rekordbox**         | En vez de pedirle al DJ que elija carpetas, leer su base de datos de Rekordbox o sus crates de Serato y analizar «mi biblioteca» tal como él la ve, devolviendo el resultado por crate o por playlist. Nadie lo hace, y es el gesto que convierte la app en parte de la cabina. Solo lectura, nunca escribir en sus bases. | alto · v1.2  |
-| **Vigilancia de carpeta**                              | Analizar automáticamente lo que entra en la carpeta de descargas del pool y avisar solo cuando algo sale sospechoso. Convierte una compra puntual en una herramienta que se queda abierta.                                                                                                                                 | medio · v1.1 |
-| **Reporte de reclamo en PDF**                          | Un documento con el hash del archivo, el veredicto, las evidencias, el espectro real y la versión del motor, que el DJ manda al proveedor. Es el único entregable con el que el análisis se convierte en dinero recuperado.                                                                                                | bajo · T5    |
-| **Comparación A/B**                                    | Arrastrar el master y la versión recibida y ver las dos curvas superpuestas. Es la demo que se explica sola y la mejor pieza de marketing que puede tener este producto.                                                                                                                                                   | medio · v1.1 |
+## 09. Qué hago ahora
 
-### 3. La honestidad como característica de producto
+Dime y arranco. Mi orden sería:
 
-Este es el punto que más valor tiene a medio plazo y el más fácil de tirar por la borda. Todas las herramientas de este espacio tienen el mismo problema reputacional: la gente no sabe cuánto creerles. Dos gestos que te ponen por encima:
+1.  **T1, ahora mismo.** El detector de borde de E01 con sus tres tests, el gate de capacidad real y la decisión sobre el IPC. Son uno o dos días y es lo que separa «funciona» de «los números son correctos».
+2.  **El corpus.** Sigue siendo lo único que no puedo hacer yo: 200-400 masters lossless tuyos, variados, incluyendo a propósito material band-limited legítimo. Con eso monto `calibrate` y los gates de CI, y a partir de ahí los porcentajes que muestra la app son defendibles ante un sello.
+3.  **El reporte PDF.** Es medio día de trabajo y es la pieza que hace que el análisis sirva para algo fuera de tu pantalla.
 
-- **Publicar la metodología y las cifras.** Las 14 evidencias, los umbrales, y sobre todo el recall por códec y la tasa de falsos positivos medidos sobre un corpus. Decir «en AAC detectamos el 60 %» genera más confianza que no decir nada — y es verificable, lo que ninguna alternativa ofrece.
-- **Que «Inconcluso» se vea como un resultado y no como un fallo.** Una herramienta que se abstiene cuando no sabe es la que un DJ enseña a su proveedor. Una que acusa siempre se desacredita con el primer vinilo ripeado.
-
-Y el corolario incómodo: **ahora mismo no puedes salir a competir**, no por falta de funciones sino porque el producto acusaría a los WAV legítimos de tu propio público (P0-6 y P0-7) y mostraría un espectro dibujado (P0-4). Un lanzamiento en ese estado quema exactamente el activo que te haría ganar. Con las tandas T1 y T2 hechas, la conversación cambia por completo.
-
-### 4. Precio y distribución
-
-Con Spectro en 24,99 USD de compra única, hay dos posiciones defendibles y una mala. La mala es competir a la baja. Las defendibles:
-
-- **Incluido para suscriptores de BDJ LATAM** y de pago suelto para el resto. El analizador deja de ser un producto y pasa a ser una razón para suscribirse al pool — que es donde está tu ingreso recurrente.
-- **Análisis de archivo suelto gratis, escaneo de biblioteca de pago.** El gratuito es la demo que se comparte solo (un DJ arrastra un archivo, ve el veredicto, hace captura y lo publica en su grupo); el de pago es el que resuelve el problema real. Coincide con la asimetría técnica: lo que cuesta de verdad es el escaneo masivo.
-
-Para distribuir, la misma vía que ya tienes: entre colegas DJs primero, como con Stems Music, pero esta vez con el reporte PDF como pieza que circula. Cada reclamo que un DJ le manda a un sello lleva tu marca y la versión de tu motor.
-
-## 10. Qué necesito de ti
-
-1.  **Corpus.** Sigue siendo lo que bloquea todo lo demás. 200-400 masters lossless tuyos, variados, incluyendo a propósito material band-limited legítimo (vinilo, temas viejos). Sin eso, T2 no se puede hacer y los pesos LLR seguirán siendo opinión.
-2.  **¿Arranco por T1?** Son seis arreglos concretos en archivos concretos y es lo que convierte la app en funcional. Puedo hacerlos en esta sesión o en la siguiente.
-3.  **Quién escribió este código.** Si fue otra sesión trabajando desde el plan, conviene que le pase el informe; si lo escribiste tú, hay decisiones (Symphonia 0.5, `flutter_lints`, `deprecated_member_use: ignore`) que quiero entender antes de cambiarlas.
-4.  **Serato/Rekordbox.** ¿Te interesa la lectura de sus bibliotecas como diferencial de la v1.2? Es la función con más ventaja competitiva de toda la lista y también la más costosa.
-5.  **La paleta cian queda confirmada**, salvo que me digas lo contrario. Actualizo la §13 del plan para que documente lo que hay en el código y no lo que yo había propuesto.
+Y una pregunta que necesito contestada antes de T1: **¿conectamos el IPC con workers de verdad, o lo retiramos y usamos `catch_unwind`?** Lo primero es la arquitectura del plan y protege de verdad; lo segundo es media hora y deja el repo honesto. Cualquiera de las dos está bien; lo que no puede quedarse es el estado actual, con la protección a medio construir dentro del instalador.
 

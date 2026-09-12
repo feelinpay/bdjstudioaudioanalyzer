@@ -229,12 +229,13 @@ class LicenseManager implements LicensingPort {
   @override
   Future<Result<LicenseInfo>> syncLicense() => validateLicense();
 
-  /// Deriva el token de capacidad efimero para inicializar el motor nativo (§14).
+  /// Deriva el token de capacidad efímero para inicializar el motor nativo (§14).
   String deriveCapabilityToken(String hwid, int engineRev) {
     final key = utf8.encode('BDJ_AUDIO_ANALYZER_CAPABILITY_SALT_2026');
-    final message = utf8.encode('::::');
+    final message = utf8.encode('BDJA_CAPABILITY:$hwid:$engineRev');
     final hmac = Hmac(sha256, key);
-    return hmac.convert(message).toString();
+    final digest = hmac.convert(message).toString();
+    return '$hwid:$digest';
   }
 
   Future<void> _saveActivationData({

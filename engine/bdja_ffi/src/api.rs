@@ -165,8 +165,34 @@ pub fn engine_revision() -> u32 {
 
 /// Inicializa el motor con token de capacidad y directorio de trabajo.
 pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineInfoFfi, String> {
-    if capability_token.trim().is_empty() {
+    let token_clean = capability_token.trim();
+    if token_clean.is_empty() {
         return Err("Token de capacidad requerido para inicializar el motor".to_string());
+    }
+
+    // P0-8: Verificación criptográfica del token de capacidad efímero (§14)
+    let parts: Vec<&str> = token_clean.split(':').collect();
+    if parts.len() < 2 {
+        return Err("Token de capacidad con formato inválido".to_string());
+    }
+    let hwid = parts[0];
+    let token_digest = parts[1];
+
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+
+    let key = b"BDJ_AUDIO_ANALYZER_CAPABILITY_SALT_2026";
+    let message = format!("BDJA_CAPABILITY:{}:{}", hwid, ENGINE_REV);
+
+    let mut mac = HmacSha256::new_from_slice(key)
+        .map_err(|e| format!("Error HMAC: {}", e))?;
+    mac.update(message.as_bytes());
+    let expected_bytes = mac.finalize().into_bytes();
+    let expected_hex = expected_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+
+    if token_digest.to_lowercase() != expected_hex.to_lowercase() {
+        return Err("Token de capacidad inválido o alterado".to_string());
     }
 
     let mut init = INITIALIZED.write();
@@ -305,7 +331,11 @@ pub fn start_scan_job(
             cancel_clone,
             move |report| {
                 let report_ffi = map_report_to_ffi(report);
-                pending_clone.lock().push(report_ffi);
+                let mut lock = pending_clone.lock();
+                // N-6: Acotar cola en memoria a 1.000 reportes (los datos completos ya están en SQLite)
+                if lock.len() < 1000 {
+                    lock.push(report_ffi);
+                }
             },
             move |count, total, path_display| {
                 total_clone.store(total, Ordering::Relaxed);
@@ -322,19 +352,32 @@ pub fn start_scan_job(
 
 /// Consulta el progreso y recoge nuevos reportes generados desde la ultima consulta.
 pub fn poll_scan_job(job_id: i64) -> Result<ScanJobStatusFfi, String> {
-    let jobs_lock = ACTIVE_JOBS.read();
-    let map = jobs_lock.as_ref().ok_or("No hay trabajos activos")?;
-    let job = map.get(&job_id).ok_or_else(|| format!("Trabajo {} no encontrado", job_id))?;
+    let (is_completed, is_active, total_found, analyzed_count, current_path, new_reports) = {
+        let jobs_lock = ACTIVE_JOBS.read();
+        let map = jobs_lock.as_ref().ok_or("No hay trabajos activos")?;
+        let job = map.get(&job_id).ok_or_else(|| format!("Trabajo {} no encontrado", job_id))?;
 
-    let is_completed = job.is_completed.load(Ordering::SeqCst);
-    let is_active = !is_completed;
-    let total_found = job.total_found.load(Ordering::Relaxed);
-    let analyzed_count = job.analyzed_count.load(Ordering::Relaxed);
-    let current_path = job.current_path.read().clone();
-    let new_reports = {
-        let mut lock = job.pending_reports.lock();
-        std::mem::take(&mut *lock)
+        let is_completed = job.is_completed.load(Ordering::SeqCst);
+        let is_active = !is_completed;
+        let total_found = job.total_found.load(Ordering::Relaxed);
+        let analyzed_count = job.analyzed_count.load(Ordering::Relaxed);
+        let current_path = job.current_path.read().clone();
+        let new_reports = {
+            let mut lock = job.pending_reports.lock();
+            std::mem::take(&mut *lock)
+        };
+        (is_completed, is_active, total_found, analyzed_count, current_path, new_reports)
     };
+
+    if is_completed {
+        // N-7: Purgar trabajos completados antiguos en ACTIVE_JOBS
+        let mut jobs_write = ACTIVE_JOBS.write();
+        if let Some(map) = jobs_write.as_mut() {
+            if map.len() > 10 {
+                map.retain(|id, j| *id == job_id || !j.is_completed.load(Ordering::Relaxed));
+            }
+        }
+    }
 
     Ok(ScanJobStatusFfi {
         job_id,

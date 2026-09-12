@@ -43,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isDragging = false;
   String _selectedFilter = 'ALL';
   String _searchQuery = '';
+  String _throttleMode = 'turbo';
 
   @override
   void initState() {
@@ -170,7 +171,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final jobId = await startScanJob(
         roots: [folderPath],
-        throttleMode: 'turbo',
+        throttleMode: _throttleMode,
         skipCache: false,
       );
       _currentJobId = jobId;
@@ -729,6 +730,40 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Selector de intensidad de escaneo (N-10)
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceElevated,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.surfaceBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'INTENSIDAD DE CPU',
+                        style: TextStyle(
+                          color: AppColors.textDimmed,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          _buildThrottleOption('turbo', 'Turbo', Icons.bolt_rounded),
+                          const SizedBox(width: 4),
+                          _buildThrottleOption('normal', 'Normal', Icons.speed_rounded),
+                          const SizedBox(width: 4),
+                          _buildThrottleOption('silent', 'Silencioso', Icons.nightlight_round),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.folder_open_rounded, size: 18),
                   label: const Text('Escanear Carpeta'),
@@ -756,6 +791,44 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildThrottleOption(String mode, String label, IconData icon) {
+    final isSelected = _throttleMode == mode;
+    return Expanded(
+      child: InkWell(
+        onTap: _isAnalyzing ? null : () => setState(() => _throttleMode = mode),
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.electricCyan.withOpacity(0.15) : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: isSelected ? AppColors.electricCyan : AppColors.surfaceBorder.withOpacity(0.5),
+            ),
+          ),
+          child: Column(
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: isSelected ? AppColors.electricCyan : AppColors.textDimmed,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(
+                  color: isSelected ? AppColors.electricCyan : AppColors.textDimmed,
+                  fontSize: 10,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

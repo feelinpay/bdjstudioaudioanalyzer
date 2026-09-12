@@ -91,18 +91,20 @@ where
             let count = analyzed_counter.fetch_add(1, Ordering::Relaxed) + 1;
             on_progress(count, total, path_str.clone());
 
-            // Check SQLite cache
+            // Check SQLite cache with path, size, mtime, and engine_rev
             let cached_report = if !skip_cache {
                 if let Some(ref st) = store {
-                    if let Ok(Some(rep)) = st.get_report_by_path(&path_str) {
-                        if let Ok(meta) = std::fs::metadata(path) {
-                            if rep.file_size == meta.len() && rep.engine_rev == ENGINE_REV {
-                                Some(rep)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
+                    if let Ok(meta) = std::fs::metadata(path) {
+                        let mtime_utc = meta
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+
+                        match st.get_cached_report(&path_str, meta.len(), mtime_utc, ENGINE_REV) {
+                            Ok(Some(rep)) => Some(rep),
+                            _ => None,
                         }
                     } else {
                         None
@@ -114,19 +116,27 @@ where
                 None
             };
 
+            // N-1: Safe execution with panic catching for corrupted/hostile files
             let report = match cached_report {
                 Some(r) => r,
-                None => match analyze_single_file(path) {
-                    Ok(mut new_rep) => {
-                        if let Some(ref st) = store {
-                            if let Ok(id) = st.save_report(&new_rep) {
-                                new_rep.file_id = id;
+                None => {
+                    let path_buf = path.to_path_buf();
+                    let analyze_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        analyze_single_file(&path_buf)
+                    }));
+
+                    match analyze_res {
+                        Ok(Ok(mut new_rep)) => {
+                            if let Some(ref st) = store {
+                                if let Ok(id) = st.save_report(&new_rep) {
+                                    new_rep.file_id = id;
+                                }
                             }
+                            new_rep
                         }
-                        new_rep
+                        _ => return, // Continúa de forma segura si un archivo está dañado
                     }
-                    Err(_) => return,
-                },
+                }
             };
 
             on_file_analyzed(report);
