@@ -221,30 +221,51 @@ pub fn run_dsp_analysis(
     // E02: Pendiente del corte (§02 v3.0: siempre aplicable ante BrickwallCutoff o NaturalRolloff)
     let e02_val = spec.cutoff_slope_db_oct;
     let (e02_llr, e02_desc, e02_app) = match spec.cutoff_kind {
-        bdja_core::types::CutoffKind::BrickwallCutoff => {
-            let llr = if e02_val >= 60.0 { 1.5 } else { 0.8 };
-            (
-                llr,
-                format!(
-                    "Pendiente vertical brick-wall de {:.1} dB/oct (filtro digital de encoder)",
-                    e02_val
-                ),
-                true,
-            )
-        }
-        bdja_core::types::CutoffKind::NaturalRolloff => (
-            -1.0,
-            format!(
-                "Roll-off suave de {:.1} dB/oct compatible con acústica natural",
-                e02_val
-            ),
-            true,
-        ),
         bdja_core::types::CutoffKind::FullSpectrum => (
             0.0,
             "Espectro plano hasta Nyquist sin pendiente de corte".to_string(),
             false,
         ),
+        bdja_core::types::CutoffKind::BrickwallCutoff
+        | bdja_core::types::CutoffKind::NaturalRolloff => {
+            if e02_val <= 24.0 {
+                (
+                    -1.0,
+                    format!(
+                        "Roll-off suave de {:.1} dB/oct compatible con acústica natural",
+                        e02_val
+                    ),
+                    true,
+                )
+            } else if e02_val <= 40.0 {
+                (
+                    0.0,
+                    format!(
+                        "Roll-off moderado de {:.1} dB/oct (neutro, sin corte digital severo)",
+                        e02_val
+                    ),
+                    true,
+                )
+            } else if e02_val < 60.0 {
+                (
+                    0.8,
+                    format!(
+                        "Pendiente pronunciada de {:.1} dB/oct (sospechosa de filtrado digital)",
+                        e02_val
+                    ),
+                    true,
+                )
+            } else {
+                (
+                    1.5,
+                    format!(
+                        "Pendiente vertical brick-wall de {:.1} dB/oct (filtro digital de encoder)",
+                        e02_val
+                    ),
+                    true,
+                )
+            }
+        }
     };
     evidences.push(Evidence {
         code: EvidenceCode::E02,

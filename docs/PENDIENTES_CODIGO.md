@@ -1,7 +1,7 @@
 # BDJ Studio Audio Analyzer — Pendientes a nivel de código
 
-> Actualizado con el desglose forense de la primera corrida de corpus y la especificación de selección.
-> 3 bloqueantes · 1 a verificar · 7 menores · v1.1 especificada.
+> Actualizado con el diagnóstico de los 6 falsos negativos.
+> 3 bloqueantes (E05 cerrado; abiertos: E02 constante en NaturalRolloff, detector de borde, corpus real) · 3 números sin medir · 7 menores · v1.1 especificada.
 
 BDJ Studio Audio Analyzer · pendientes a nivel de código
 
@@ -9,7 +9,7 @@ BDJ Studio Audio Analyzer · pendientes a nivel de código
 
 Actualizado con el desglose forense de la primera corrida de corpus. La causa raíz de los 20 inconclusos está identificada y es de una sola evidencia. Los 4 falsos positivos no son un defecto del motor: son archivos del generador sintético que sí tenían un corte real en los bytes.
 
-**Bloqueantes** 3 **A verificar** 1 **Menores** 7 **v1.1 especificada** 4 funciones
+**Bloqueantes** 3 **Confirmado** frontera de −4,00 inalcanzable **Menores** 7 **v1.1 especificada** 4 funciones
 
 ## 0. Lo que ya está cerrado
 
@@ -64,9 +64,13 @@ Y con §01 en la mano, el corpus tampoco sirve para la otra clase: E05 se dispar
   
 El corpus sintético conviene conservarlo, pero para lo que sí sirve: tests unitarios de regresión con respuesta conocida. Ahí es bueno; como referencia estadística no.
 
-## 04. A verificar: ¿se puede alcanzar «Lossless verificado»?
+## 04. Confirmado: «Lossless verificado» es inalcanzable
 
-En el desglose de `genuine_lossless_01` aparecen E01, E02, E03, E04, E05, E06, E07 y E11. **E08 no figura.** Si es un recorte del pegado, no hay nada que revisar; si el JSON realmente no lo trae, importa, porque la aritmética del veredicto máximo depende de esa evidencia:
+Confirmado en la segunda corrida
+
+La mediana lossless quedó en **−3,20 exactamente** de p0 a p95: E08 no aporta su −0,80 porque el piso de ruido sintético ronda los −55 dBFS y no cruza el umbral de −80. Sobre material continuo, el mejor veredicto posible hoy es \*\*Probablemente lossless\*\*. Decisión acordada: no mover la frontera a ciegas — con másters reales de 16 bits el dither está entre −90 y −96 dBFS, así que hay que observar si E08 dispara de forma consistente para dar el −4,00 o si la distribución aconseja bajar la cota a ≤ −3,00 o subir el peso de E01 ante `FullSpectrum`.
+
+La aritmética del veredicto máximo:
 
     E01 -1.80  (FullSpectrum)
     E04 -1.40  (sin huecos)
@@ -77,6 +81,47 @@ En el desglose de `genuine_lossless_01` aparecen E01, E02, E03, E04, E05, E06, E
 Sin el −0,80 de E08 el mínimo alcanzable es −3,20, que es *Probablemente lossless* y no *Lossless verificado*. Es decir: una vez arreglado E05, esas 19 pistas pasan a −3,20 y se quedan ahí si E08 no aporta. Conviene comprobar en el JSON de un archivo real si E08 aparece y con qué valor, y si no aparece, revisar por qué (el piso de ruido de un archivo sintético sin dither no baja de −80 dB, así que puede ser otro efecto del corpus).
 
 Dicho de otra forma: el veredicto máximo se alcanza justo en el límite, sumando exactamente −4,00 con las tres evidencias. No hay margen. Cuando haya corpus real, esa frontera es la primera que hay que mirar en la distribución.
+
+### Coste del arreglo de E05: el recall bajó
+
+Tras neutralizar E05 y bajarle el peso a 1,0, la segunda corrida da FPR 0,00 % y 27 de 28 lossless clasificados correctamente — pero el **recall cayó de 85,71 % a 76,92 %**: los falsos negativos pasaron de 4 a 6.
+
+Eso es el precio de haber sacado E05 del conjunto fuerte. Un transcode cuya única evidencia fuerte era E05 ya no puede alcanzar *Probable transcode*, y además pierde 1,2 de score. La corrección de *aplicabilidad* era correcta; el **peso de 1,0 es otro número puesto a mano** y hay que sacarlo del corpus.
+
+**Diagnóstico hecho**Los 6 falsos negativos son **todos** del primer tipo: el detector no clasificó ninguno como `BrickwallCutoff`. Cuatro cayeron en `FullSpectrum` y dos en `NaturalRolloff`. No es un problema de pesos de E05 — es el detector de borde. Ver §04b.  
+  
+El caso peor de todo el corpus: `latin_transcode_14`, un MP3 320 real, salió **LosslessVerified** con −4,00. La clase de fallo que costó tres iteraciones eliminar reapareció por otra vía: antes era la tabla de umbrales, ahora es que el detector no ve el corte.
+
+## 04b. El detector de borde y el bug de E02
+
+| Archivo (MP3 320)  | Veredicto                      | Score | CutoffKind     | BW     | Pendiente |
+|--------------------|--------------------------------|-------|----------------|--------|-----------|
+| latin_transcode_14 | \*\*Lossless verificado\*\*    | −4,00 | FullSpectrum   | 22 050 | 0,0       |
+| latin_transcode_08 | \*\*Probablemente lossless\*\* | −3,20 | FullSpectrum   | 22 050 | 0,0       |
+| latin_transcode_13 | \*\*Probablemente lossless\*\* | −3,10 | FullSpectrum   | 22 050 | 0,0       |
+| latin_transcode_26 | \*\*Probablemente lossless\*\* | −2,30 | FullSpectrum   | 22 050 | 0,0       |
+| latin_transcode_15 | \*\*Probablemente lossless\*\* | −3,20 | NaturalRolloff | 18 798 | 86,7      |
+| latin_transcode_16 | \*\*Probablemente lossless\*\* | −1,50 | NaturalRolloff | 18 276 | 103,5     |
+
+#### \*\*B-4\*\* E02 exonera con −1,0 aunque haya medido 103 dB/oct \`bdja_dsp/src/pipeline.rs · rama NaturalRolloff\`
+
+En la rama `NaturalRolloff`, E02 devuelve un **−1,0 constante** con el texto «roll-off suave de {slope} dB/oct compatible con acústica natural». Con los archivos 15 y 16 eso imprime literalmente *«roll-off suave de 103,5 dB/oct»* y les regala 1,0 de exoneración. Ninguna caída acústica natural pasa de ~20 dB/oct; 86 y 103 son filtros digitales sin discusión.
+
+Es un bug independiente del detector y se arregla sin corpus: **el LLR de E02 debe ser función de la pendiente medida en las dos ramas**, no una constante por rama. Solo por encima de ~40 dB/oct ya deja de ser exonerador. Con eso, los archivos 15 y 16 se mueven ~2,5 puntos y salen de *Probablemente lossless*.
+
+#### \*\*B-5\*\* El detector exige que la caída ocurra dentro de una sola ventana \`bdja_dsp/src/spectrum.rs\`
+
+Los dos modos de fallo tienen la misma raíz. La transición de un filtro de encoder a 320 kbps se extiende 1,5-2 kHz, así que la caída medida entre dos ventanas contiguas de 1 200 Hz sale de 16-17 dB y queda por debajo del `min_drop` de 18. Cuando eso pasa, el flujo cae al chequeo de energía en el extremo superior, y ahí el piso de cuantización del encoder a −65,2 dBFS cumple `top_band_db >= ref_level − 50` por **1,6 dB de margen** y se declara espectro pleno.
+
+**Bajar `min_drop` no es el arreglo.** Es el arreglo frágil: amplía la detección y a la vez sube el riesgo de borde falso en caídas acústicas pronunciadas, y la ventana de 1 200 Hz seguiría siendo demasiado estrecha para un filtro que dura 2 kHz.
+
+**Arreglo robusto**Comparar el nivel *antes del borde* contra *todo lo que hay bien por encima*, no contra la ventana inmediatamente adyacente: ventana previa de ~1,5 kHz que termina en el candidato, frente a la media desde candidato + 1,5 kHz hasta Nyquist. Eso desacopla «cuán empinada es» de «cuánto cae en total», que es la magnitud que discrimina. Medido sobre señales sintéticas con lowpass realista, esa formulación da caídas de 85-93 dB en material con pérdida frente a 1,6-5,3 dB en roll-off natural: dos órdenes de magnitud de margen, en lugar de los 1,6 dB actuales.  
+  
+Y para el chequeo del extremo superior, sustituir el umbral relativo fijo por una comparación de *forma*: el piso de cuantización de un encoder es plano, mientras que el contenido de un lossless continúa la tendencia del espectro. Comparar el nivel medido en 19-22 kHz contra el extrapolado de la tendencia de 10-17 kHz distingue las dos cosas sin un número a mano.
+
+### Números pendientes de medir
+
+Los tres que hoy están puestos a mano y que `calibrate` debe fijar contra la distribución empírica: el umbral de E05 (`0.08`), su peso (`1.0`) y `min_drop` (`15/18 dB`, bajado desde 20). Y el FPR de 0,00 % medido sobre 28 pistas tiene una resolución de 3,6 %: todavía no es un 1 % medido.
 
 ## 05. Menores abiertos
 

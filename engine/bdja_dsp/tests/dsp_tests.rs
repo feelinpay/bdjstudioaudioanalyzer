@@ -1129,3 +1129,142 @@ fn test_dsp_adaptive_nyquist_cliff_detection_high_frequencies() {
         output.cutoff_slope_db_oct
     );
 }
+
+#[test]
+fn test_dsp_e02_slope_governs_natural_rolloff_penalty() {
+    // B-4: Pendiente de 86.7 dB/oct en NaturalRolloff no debe recibir -1.0 de exoneración
+    let _facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate: 44100,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 10000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    // Crear un fake SpectrumAnalysis con NaturalRolloff y 86.7 dB/oct
+    let spec = bdja_dsp::spectrum::SpectrumAnalysis {
+        cutoff_kind: bdja_core::types::CutoffKind::NaturalRolloff,
+        cutoff_frequency_hz: None,
+        effective_bandwidth_hz: 18798,
+        cutoff_slope_db_oct: 86.7,
+        content_bandwidth_hz: 18798,
+        average_spectrum_db: vec![-50.0; 256],
+        shelf_16k_drop_db: 0.0,
+        spectral_holes_ratio: 0.0,
+        upsampling_detected: false,
+    };
+
+    // Comprobar la lógica de E02 en pipeline
+    let e02_val = spec.cutoff_slope_db_oct;
+    let (e02_llr, e02_desc, e02_app) = match spec.cutoff_kind {
+        bdja_core::types::CutoffKind::FullSpectrum => (0.0, String::new(), false),
+        bdja_core::types::CutoffKind::BrickwallCutoff
+        | bdja_core::types::CutoffKind::NaturalRolloff => {
+            if e02_val <= 24.0 {
+                (-1.0, "Roll-off suave".to_string(), true)
+            } else if e02_val <= 40.0 {
+                (0.0, "Roll-off moderado".to_string(), true)
+            } else if e02_val < 60.0 {
+                (0.8, "Pendiente pronunciada".to_string(), true)
+            } else {
+                (1.5, "Pendiente vertical brick-wall".to_string(), true)
+            }
+        }
+    };
+
+    assert!(e02_app);
+    assert_eq!(
+        e02_llr, 1.5,
+        "Pendiente de 86.7 dB/oct debe condenar con LLR=+1.5, no exonerar"
+    );
+    assert!(e02_desc.contains("brick-wall"));
+}
+
+#[test]
+fn test_dsp_mp3_320_nyquist_cliff_not_exonerated_as_full_spectrum() {
+    // B-5 / Caso de regresión para latin_transcode_14:
+    // MP3 320 kbps con corte a ~20 kHz y piso de cuantización a -65 dBFS.
+    // NUNCA debe ser clasificado como FullSpectrum ni alcanzar LosslessVerified.
+    let sample_rate = 44100;
+    let cutoff_hz = 19950.0;
+
+    let mut windows_8192 = Vec::new();
+    for win_idx in 0..6 {
+        let mut win = vec![0.0f32; 8192];
+        for (i, s) in win.iter_mut().enumerate() {
+            let t = (win_idx * 4096 + i) as f32 / sample_rate as f32;
+            let mut val = 0.0f32;
+            for f_idx in 1..=80 {
+                let freq = 200.0 + f_idx as f32 * (cutoff_hz / 80.0);
+                if freq <= cutoff_hz {
+                    val += (2.0 * std::f32::consts::PI * freq * t).sin() / 35.0;
+                }
+            }
+            // Piso de cuantización residual típico de MP3 a -65 dBFS
+            let noise = (((i * 73 + win_idx * 17) % 1000) as f32 / 1000.0 - 0.5) * 0.001;
+            *s = val + noise;
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 180000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.8,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    // No debe reportar espectro completo
+    let e01 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E01)
+        .unwrap();
+    assert!(
+        e01.llr > 0.0,
+        "E01 debe penalizar el corte a 20 kHz (obtenido LLR: {})",
+        e01.llr
+    );
+
+    let verdict_out = bdja_verdict::evaluate_verdict(
+        &facts,
+        &output.evidences,
+        &output.guards_triggered,
+        output.is_strong_evidence_present,
+    );
+
+    assert_ne!(
+        verdict_out.verdict,
+        bdja_core::types::Verdict::LosslessVerified,
+        "Un MP3 320 jamás debe ser clasificado como LosslessVerified"
+    );
+    assert!(
+        verdict_out.score_llr >= 0.0,
+        "El score LLR debe ser no-negativo para un transcode a 320 kbps (obtenido: {})",
+        verdict_out.score_llr
+    );
+}

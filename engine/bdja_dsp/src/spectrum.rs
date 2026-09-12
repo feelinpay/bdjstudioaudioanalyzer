@@ -80,53 +80,53 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
     let step_stride = (base_win_bins / 4).max(1);
     for b in (bin_8k..=bin_nyquist_margin).step_by(step_stride) {
         let f_b = b as f64 * bin_hz;
-        // Ventana adaptativa: cerca de Nyquist (> 19 kHz a 44.1k) se ajusta para que la banda post-corte
-        // tenga espacio suficiente para medirse sin truncarse al borde de Nyquist.
-        let remaining_hz = (nyquist - f_b).max(250.0);
-        let cur_win_hz = step_hz.min(remaining_hz * 0.75).max(350.0);
-        let win_bins = ((cur_win_hz / bin_hz).round() as usize).max(4);
+        let remaining_hz = nyquist - f_b;
 
-        let b_start = b.saturating_sub(win_bins);
-        let b_end = (b + win_bins).min(n_bins);
+        // Ventana previa antes del candidato (~1500 Hz terminando en b)
+        let pre_win_hz = (f_b * 0.25).clamp(600.0, 1500.0);
+        let pre_bins = ((pre_win_hz / bin_hz).round() as usize).max(4);
+        let b_start = b.saturating_sub(pre_bins);
 
-        if b_start < b && b < b_end {
+        // Banda posterior: adaptativa según si estamos en la zona de corte de MP3 320 / Nyquist de máster (18.5k - 23.5k)
+        // o en el rango medio/estándar.
+        let (post_start, post_end, min_drop) =
+            if (18_500.0..=23_500.0).contains(&f_b) || remaining_hz < 3000.0 {
+                let trans_margin_hz = (remaining_hz * 0.35).clamp(180.0, 450.0);
+                let trans_bins = ((trans_margin_hz / bin_hz).round() as usize).max(2);
+                let p_start = (b + trans_bins).min(n_bins - 1);
+                let post_span_hz = remaining_hz.min(2500.0);
+                let p_end = n_bins.min(p_start + ((post_span_hz / bin_hz).round() as usize).max(4));
+                (p_start, p_end, 13.0)
+            } else {
+                let post_win_hz = step_hz.min(remaining_hz * 0.75).max(350.0);
+                let win_bins = ((post_win_hz / bin_hz).round() as usize).max(4);
+                let p_start = b;
+                let p_end = (b + win_bins).min(n_bins);
+                (p_start, p_end, 17.0)
+            };
+
+        if b_start < b && post_start < post_end.saturating_sub(2) {
             let p_before: f64 =
                 avg_power[b_start..b].iter().map(|&p| p as f64).sum::<f64>() / (b - b_start) as f64;
-            let p_after: f64 =
-                avg_power[b..b_end].iter().map(|&p| p as f64).sum::<f64>() / (b_end - b) as f64;
+            let p_post: f64 = avg_power[post_start..post_end]
+                .iter()
+                .map(|&p| p as f64)
+                .sum::<f64>()
+                / (post_end - post_start) as f64;
 
             let db_before = 10.0 * (p_before + 1e-12).log10();
-            let db_after = 10.0 * (p_after + 1e-12).log10();
-            let drop = db_before - db_after;
+            let db_post = 10.0 * (p_post + 1e-12).log10();
+            let drop = db_before - db_post;
 
-            // Condición de corte digital:
-            // 1. Energía antes del corte suficiente respecto al nivel de referencia
-            // 2. Caída abrupta (mínimo 16 dB en ventana estrecha / 18 dB estándar)
-            // 3. Supresión sostenida post-corte verificada en la banda superior
-            let min_drop = if cur_win_hz < 800.0 { 15.0 } else { 18.0 };
             if db_before >= (ref_level - 70.0).max(-85.0) && drop >= min_drop {
-                let post_start = b + (win_bins / 2).max(1);
-                let p_post: f64 = if post_start < n_bins {
-                    avg_power[post_start..n_bins]
-                        .iter()
-                        .map(|&p| p as f64)
-                        .sum::<f64>()
-                        / (n_bins - post_start) as f64
-                } else {
-                    p_after
-                };
-                let db_post = 10.0 * (p_post + 1e-12).log10();
+                let delta_f = (f_b * 0.08).max(350.0);
+                let f1 = (f_b - delta_f).max(100.0);
+                let f2 = (f_b + delta_f).min(nyquist);
+                let octaves = (f2 / f1).log2().max(0.1);
+                let slope = (drop / octaves).max(45.0);
 
-                if db_post <= (db_before - 14.0) {
-                    let delta_f = (f_b * 0.08).max(350.0);
-                    let f1 = (f_b - delta_f).max(100.0);
-                    let f2 = (f_b + delta_f).min(nyquist);
-                    let octaves = (f2 / f1).log2().max(0.1);
-                    let slope = (drop / octaves).max(45.0);
-
-                    detected_cliff = Some((b, drop, slope));
-                    break; // Tomar el primer corte artificial verificado
-                }
+                detected_cliff = Some((b, drop, slope));
+                break; // Tomar el primer corte artificial verificado
             }
         }
     }
@@ -151,8 +151,41 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
             slope,
         )
     } else {
-        // No existe corte brickwall artificial.
-        // Verificar presencia de energía en el extremo superior (88% Nyquist a Nyquist)
+        // No existe corte brickwall artificial detectado en el barrido.
+        // Ajustar tendencia espectral en octavas entre 10 kHz y 17 kHz
+        let bin_10k = ((10_000.0 / bin_hz).round() as usize).clamp(bin_1k, n_bins - 1);
+        let bin_17k = ((17_000.0 / bin_hz).round() as usize).clamp(bin_10k + 4, n_bins - 1);
+
+        let mut sum_x = 0.0f64;
+        let mut sum_y = 0.0f64;
+        let mut sum_xx = 0.0f64;
+        let mut sum_xy = 0.0f64;
+        let count = (bin_17k - bin_10k) as f64;
+
+        for (idx, &db_val) in smoothed_db.iter().enumerate().take(bin_17k).skip(bin_10k) {
+            let f_i = idx as f64 * bin_hz;
+            let x = (f_i / 10_000.0).log2();
+            let y = db_val;
+            sum_x += x;
+            sum_y += y;
+            sum_xx += x * x;
+            sum_xy += x * y;
+        }
+        let denom = count * sum_xx - sum_x * sum_x;
+        let (alpha, beta) = if denom.abs() > 1e-6 {
+            let b = (count * sum_xy - sum_x * sum_y) / denom;
+            let a = (sum_y - b * sum_x) / count;
+            (a, b)
+        } else {
+            (ref_level - 30.0, -6.0)
+        };
+
+        // Extrapolación al centro de la banda extrema (20.5 kHz o 93% Nyquist)
+        let f_top_center = nyquist * 0.93;
+        let x_top = (f_top_center / 10_000.0).log2();
+        let expected_top_db = alpha + beta * x_top;
+
+        // Medir energía real en la banda extrema superior (88% Nyquist a Nyquist)
         let top_band_start = ((nyquist * 0.88) / bin_hz) as usize;
         let top_band_p: f64 = avg_power[top_band_start..n_bins]
             .iter()
@@ -161,7 +194,13 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
             / (n_bins - top_band_start).max(1) as f64;
         let top_band_db = 10.0 * (top_band_p + 1e-12).log10();
 
-        if top_band_db >= (ref_level - 50.0).max(-82.0) {
+        // Criterio de FullSpectrum:
+        // 1. Nivel absoluto por encima del umbral mínimo de energía activa
+        // 2. La energía real no colapsa respecto a la extrapolación espectral (máximo 16 dB por debajo)
+        let is_continuous_trend = top_band_db >= (expected_top_db - 16.0);
+        let has_absolute_energy = top_band_db >= (ref_level - 50.0).max(-82.0);
+
+        if is_continuous_trend && has_absolute_energy {
             // Espectro pleno hasta Nyquist sin restricción artificial
             (
                 CutoffKind::FullSpectrum,
@@ -189,7 +228,7 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
             }
 
             let measured_hz = natural_cutoff_bin as f64 * bin_hz;
-            if measured_hz >= nyquist * 0.92 {
+            if is_continuous_trend && measured_hz >= nyquist * 0.92 {
                 (
                     CutoffKind::FullSpectrum,
                     None,
