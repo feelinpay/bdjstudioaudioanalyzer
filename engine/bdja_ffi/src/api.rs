@@ -210,14 +210,9 @@ pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineI
     let mut store_lock = STORE.write();
 
     let db_path = Path::new(&data_dir).join("bdj_audio_analyzer.db");
-    match ReportStore::open(&db_path) {
-        Ok(store) => *store_lock = Some(Arc::new(store)),
-        Err(_) => {
-            if let Ok(mem_store) = ReportStore::open_in_memory() {
-                *store_lock = Some(Arc::new(mem_store));
-            }
-        }
-    }
+    let store = ReportStore::open(&db_path)
+        .map_err(|e| format!("Error abriendo base de datos en {:?}: {}", db_path, e))?;
+    *store_lock = Some(Arc::new(store));
 
     *init = true;
     *dir = Some(data_dir.clone());

@@ -1,4 +1,4 @@
-use bdja_core::types::{Evidence, EvidenceCode, FormatFacts, Verdict};
+use bdja_core::types::{Evidence, FormatFacts, Verdict};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VerdictResult {
@@ -35,30 +35,13 @@ pub fn evaluate_verdict(
     for ev in evidences {
         if ev.applicable {
             raw_llr += ev.llr;
-            if ev.code.is_strong() && ev.llr >= 1.5 {
+            if ev.code.is_strong() && ev.llr >= 1.4 {
                 strong_ev_codes.push(ev.code.label());
             }
         }
     }
 
-    // 3. Temporal consistency check (E14)
-    // If evidence of cutoff appears in less than consistent portions of the track,
-    // dampen LLR by 50%
-    let temporal_damped_llr = if let Some(e14) = evidences.iter().find(|e| e.code == EvidenceCode::E14) {
-        if let Some(var) = e14.value {
-            if var > 0.8 && raw_llr > 0.0 {
-                raw_llr * 0.5
-            } else {
-                raw_llr
-            }
-        } else {
-            raw_llr
-        }
-    } else {
-        raw_llr
-    };
-
-    let score_llr = (temporal_damped_llr * 100.0).round() / 100.0;
+    let score_llr = (raw_llr * 100.0).round() / 100.0;
 
     // 4. Guards check (False Positive Veto)
     let has_guards = !guards_triggered.is_empty();

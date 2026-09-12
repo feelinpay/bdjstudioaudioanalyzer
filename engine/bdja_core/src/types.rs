@@ -66,7 +66,7 @@ pub enum EvidenceCode {
 
 impl EvidenceCode {
     pub fn is_strong(&self) -> bool {
-        matches!(self, EvidenceCode::E04 | EvidenceCode::E05 | EvidenceCode::E07 | EvidenceCode::E13)
+        matches!(self, EvidenceCode::E01 | EvidenceCode::E04 | EvidenceCode::E05 | EvidenceCode::E07 | EvidenceCode::E13)
     }
 
     pub fn label(&self) -> &'static str {

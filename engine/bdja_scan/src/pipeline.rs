@@ -12,6 +12,59 @@ pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
     let file_size = metadata.len();
     let path_str = path.to_string_lossy().to_string();
 
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        analyze_single_file_inner(path, file_size, &path_str)
+    }));
+
+    match res {
+        Ok(r) => r,
+        Err(panic_err) => {
+            let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Pánico desconocido en el análisis de audio".to_string()
+            };
+            Ok(FileReport {
+                file_id: 0,
+                path: path_str,
+                file_size,
+                engine_rev: ENGINE_REV,
+                facts: FormatFacts {
+                    container: "CORRUPTED".to_string(),
+                    codec: "PANIC_RECOVERED".to_string(),
+                    codec_type: Codec::Unknown,
+                    sample_rate: 0,
+                    bit_depth: None,
+                    channels: 0,
+                    duration_ms: 0,
+                    container_bitrate_kbps: None,
+                    is_lossless_declared: false,
+                },
+                verdict: Verdict::Inconclusive,
+                confidence: 0.5,
+                score_llr: 0.0,
+                effective_bandwidth_hz: None,
+                cutoff_slope_db_oct: None,
+                evidences: Vec::new(),
+                quality: QualityMetrics {
+                    true_peak_dbtp: None,
+                    lufs_integrated: None,
+                    clipped_samples: 0,
+                    dc_offset: None,
+                    dynamic_range_db: None,
+                    stereo_correlation: None,
+                },
+                guards_triggered: vec![format!("Pánico capturado: {}", msg)],
+                verdict_summary: format!("Error crítico evitado al procesar el archivo: {}", msg),
+                average_spectrum_db: vec![-120.0; 256],
+            })
+        }
+    }
+}
+
+fn analyze_single_file_inner(path: &Path, file_size: u64, path_str: &str) -> Result<FileReport, String> {
     // 1. Decode & Forensic header extraction
     let decoded = match decode_audio_file(path) {
         Ok(d) => d,
@@ -19,7 +72,7 @@ pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
             // If decode failed, produce an Inconclusive report with error explanation
             return Ok(FileReport {
                 file_id: 0,
-                path: path_str,
+                path: path_str.to_string(),
                 file_size,
                 engine_rev: ENGINE_REV,
                 facts: FormatFacts {
@@ -80,7 +133,7 @@ pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
 
     Ok(FileReport {
         file_id: 0,
-        path: path_str,
+        path: path_str.to_string(),
         file_size,
         engine_rev: ENGINE_REV,
         facts: decoded.facts,

@@ -219,11 +219,13 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
                                 (0.0, 0.0)
                             };
                             let mono = (l + r) * 0.5;
-                            let abs_mono = mono.abs();
-                            if abs_mono > max_peak {
-                                max_peak = abs_mono;
+                            let abs_l = l.abs();
+                            let abs_r = r.abs();
+                            let peak_sample = abs_l.max(abs_r);
+                            if peak_sample > max_peak {
+                                max_peak = peak_sample;
                             }
-                            if abs_mono >= 0.9999 {
+                            if abs_l >= 0.9999 || abs_r >= 0.9999 {
                                 clipped_samples += 1;
                             }
                             sum_samples += mono as f64;

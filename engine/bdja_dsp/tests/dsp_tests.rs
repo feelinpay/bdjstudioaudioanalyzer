@@ -215,10 +215,17 @@ fn test_dsp_continuous_lossless_attains_verified() {
     let mut rng: u32 = 42424242;
     let mut next_dither = || -> f32 {
         rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-        (((rng % 20000) as f32 / 10000.0) - 1.0) * 0.00015 // dither floor ~ -76 dBFS
+        (((rng % 20000) as f32 / 10000.0) - 1.0) * 0.00003 // 16-bit dither floor ~ -90 dBFS
     };
 
     let mut windows_8192 = Vec::new();
+    // Pre-roll / intro con piso de dither de máster (~ -90 dBFS)
+    let mut intro = vec![0.0f32; 8192];
+    for s in intro.iter_mut() {
+        *s = next_dither();
+    }
+    windows_8192.push(intro);
+
     for phase_offset in 0..6 {
         let mut win = vec![0.0f32; 8192];
         for f_idx in 1..=100 {
@@ -416,7 +423,7 @@ fn test_dsp_mp3_320_transcode_is_convicted() {
         output.is_strong_evidence_present,
     );
 
-    // NUNCA debe salir certificado como LosslessVerified ni LikelyLossless
+    // Aserción positiva (§08 pendientes): Debe condenarse positivamente
     assert_ne!(
         verdict_res.verdict,
         bdja_core::types::Verdict::LosslessVerified,
@@ -430,9 +437,139 @@ fn test_dsp_mp3_320_transcode_is_convicted() {
         verdict_res.score_llr
     );
     assert!(
-        verdict_res.score_llr >= 0.0,
-        "Score LLR {} debe ser >= 0.0 para un transcode de 320 kbps",
+        verdict_res.score_llr >= 2.7,
+        "Score LLR {} debe ser >= 2.7 para un transcode de 320 kbps",
         verdict_res.score_llr
+    );
+    assert!(
+        verdict_res.verdict == bdja_core::types::Verdict::ProbableTranscode || verdict_res.verdict == bdja_core::types::Verdict::Suspicious,
+        "MP3 320 debe ser clasificado positivamente como ProbableTranscode o Suspicious! Obtenido: {:?}",
+        verdict_res.verdict
+    );
+}
+
+#[test]
+fn test_dsp_mp3_192_transcode_positive_conviction() {
+    // §08: Validación positiva para MP3 192 transcodeado a WAV (corte a ~19.0 kHz)
+    let sample_rate = 44100;
+
+    let mut windows_8192 = Vec::new();
+    for phase_offset in 0..4 {
+        let mut win = vec![0.0f32; 8192];
+        for f_idx in 1..=75 {
+            let freq = 200.0 + f_idx as f32 * 250.0; // Armónicos densos hasta 18.950 Hz
+            let phase = phase_offset as f32 * 0.4 + f_idx as f32 * 0.2;
+            let amp = 1.0 / (1.0 + (freq / 3000.0).powf(0.8));
+            for (i, s) in win.iter_mut().enumerate() {
+                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 30.0;
+            }
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 180000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.85,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01).unwrap();
+    assert!(e01.llr >= 1.6, "E01 debe aportar >= 1.6 para MP3 192, obtenido: {}", e01.llr);
+
+    let verdict_res = bdja_verdict::evaluate_verdict(
+        &facts,
+        &output.evidences,
+        &output.guards_triggered,
+        output.is_strong_evidence_present,
+    );
+
+    assert!(verdict_res.score_llr >= 2.7, "Score LLR {} debe ser >= 2.7 para MP3 192", verdict_res.score_llr);
+    assert!(
+        verdict_res.verdict == bdja_core::types::Verdict::ProbableTranscode || verdict_res.verdict == bdja_core::types::Verdict::Suspicious,
+        "MP3 192 debe ser condenado como ProbableTranscode o Suspicious! Obtenido: {:?}",
+        verdict_res.verdict
+    );
+}
+
+#[test]
+fn test_dsp_aac_256_transcode_positive_conviction() {
+    // §08: Validación positiva para AAC 256 transcodeado a WAV (corte a ~19.5 kHz)
+    let sample_rate = 44100;
+
+    let mut windows_8192 = Vec::new();
+    for phase_offset in 0..4 {
+        let mut win = vec![0.0f32; 8192];
+        for f_idx in 1..=77 {
+            let freq = 200.0 + f_idx as f32 * 253.0; // Armónicos hasta 19.680 Hz
+            let phase = phase_offset as f32 * 0.3 + f_idx as f32 * 0.15;
+            let amp = 1.0 / (1.0 + (freq / 3500.0).powf(0.8));
+            for (i, s) in win.iter_mut().enumerate() {
+                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 30.0;
+            }
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 180000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.85,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let verdict_res = bdja_verdict::evaluate_verdict(
+        &facts,
+        &output.evidences,
+        &output.guards_triggered,
+        output.is_strong_evidence_present,
+    );
+
+    assert!(verdict_res.score_llr >= 2.7, "Score LLR {} debe ser >= 2.7 para AAC 256", verdict_res.score_llr);
+    assert!(
+        verdict_res.verdict == bdja_core::types::Verdict::ProbableTranscode || verdict_res.verdict == bdja_core::types::Verdict::Suspicious,
+        "AAC 256 debe ser condenado como ProbableTranscode o Suspicious! Obtenido: {:?}",
+        verdict_res.verdict
     );
 }
 

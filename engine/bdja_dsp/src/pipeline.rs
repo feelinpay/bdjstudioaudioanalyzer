@@ -49,13 +49,16 @@ pub fn run_dsp_analysis(
         analyze_stereo(&[], &[], sample_rate)
     };
 
-    // Concatenate a portion of mono samples for quality analysis
+    // Concatenate all decoded windows for comprehensive quality analysis
     let mut mono_slice = Vec::new();
-    for win in windows_8192.iter().take(4) {
+    for win in windows_8192 {
         mono_slice.extend_from_slice(win);
     }
     let qual = analyze_quality(
         &mono_slice,
+        left_samples,
+        right_samples,
+        sample_rate,
         max_peak,
         clipped_samples,
         dc_offset,
@@ -95,23 +98,25 @@ pub fn run_dsp_analysis(
     let mut evidences = Vec::new();
     let mut strong_evidence_present = false;
 
-    // E01: Ancho de banda efectivo y corte artificial (§02 v3.0)
+    // E01: Ancho de banda efectivo y corte artificial (§02 v3.0, §01 pendientes)
     let nyquist = facts.sample_rate as f64 / 2.0;
     let e01_hz = spec.cutoff_frequency_hz.unwrap_or(spec.effective_bandwidth_hz) as f64;
+    let cliff = spec.cutoff_kind == bdja_core::types::CutoffKind::BrickwallCutoff;
     let (e01_llr, e01_desc, e01_val) = match spec.cutoff_kind {
         bdja_core::types::CutoffKind::BrickwallCutoff => {
+            strong_evidence_present = true;
             let cutoff_hz = e01_hz;
             let ratio = cutoff_hz / nyquist;
 
             let (llr, desc) = if ratio <= 0.76 {
                 // <= 16.7 kHz en 44.1k (compatible con MP3 128 kbps)
                 (2.2, format!("Corte brick-wall abrupto en {} Hz (compatible con MP3 128 kbps)", cutoff_hz as u32))
-            } else if ratio <= 0.86 {
-                // <= 19.0 kHz en 44.1k (compatible con MP3 192 kbps)
+            } else if ratio <= 0.90 {
+                // <= 19.8 kHz en 44.1k (compatible con MP3 192 kbps)
                 (1.6, format!("Corte brick-wall en {} Hz (compatible con MP3 192 kbps)", cutoff_hz as u32))
             } else if ratio <= 0.96 {
                 // <= 21.1 kHz en 44.1k (compatible con MP3 256/320 kbps)
-                (1.2, format!("Corte brick-wall en {} Hz (compatible con MP3 256/320 kbps)", cutoff_hz as u32))
+                (1.4, format!("Corte brick-wall en {} Hz (compatible con MP3 256/320 kbps)", cutoff_hz as u32))
             } else {
                 (0.8, format!("Corte de alta frecuencia en {} Hz con caída abrupta", cutoff_hz as u32))
             };
@@ -172,19 +177,21 @@ pub fn run_dsp_analysis(
 
     // E04: Huecos espectrales (FUERTE)
     let e04_val = spec.spectral_holes_ratio;
-    let (e04_llr, e04_desc) = if e04_val >= 0.15 {
+    let (e04_llr, e04_app, e04_desc) = if e04_val >= 0.15 {
         strong_evidence_present = true;
-        (2.5, format!("Huecos psicoacusticos marcados ({:.1}% subbandas anuladas en agudos)", e04_val * 100.0))
+        (2.5, true, format!("Huecos psicoacusticos marcados ({:.1}% subbandas anuladas en agudos)", e04_val * 100.0))
     } else if e04_val >= 0.08 {
-        (1.4, format!("Presencia moderada de huecos espectrales ({:.1}%)", e04_val * 100.0))
+        (1.4, true, format!("Presencia moderada de huecos espectrales ({:.1}%)", e04_val * 100.0))
+    } else if cliff {
+        (0.0, false, "No concluyente: la banda analizada queda por debajo del corte detectado".to_string())
     } else {
-        (-1.4, format!("Continuidad espectral natural ({:.1}% huecos)", e04_val * 100.0))
+        (-1.4, true, format!("Continuidad espectral natural ({:.1}% huecos)", e04_val * 100.0))
     };
     evidences.push(Evidence {
         code: EvidenceCode::E04,
         value: Some(e04_val),
         llr: e04_llr,
-        applicable: true,
+        applicable: e04_app,
         description: e04_desc,
     });
 
@@ -241,18 +248,20 @@ pub fn run_dsp_analysis(
     });
 
     // E08: Piso de ruido y dither
-    let (e08_llr, e08_desc) = if qual.has_exact_digital_silence && e01_hz < 20000.0 {
-        (0.8, "Silencio digital absoluto en pasajes de bajo nivel (tipico de decodificacion lossy)".to_string())
+    let (e08_llr, e08_app, e08_desc) = if qual.has_exact_digital_silence && cliff {
+        (0.8, true, "Silencio digital absoluto en pasajes de bajo nivel (tipico de decodificacion lossy)".to_string())
+    } else if cliff {
+        (0.0, false, "No concluyente: corte artificial detectado".to_string())
     } else if qual.noise_floor_db < -80.0 {
-        (-0.8, format!("Piso de ruido coherente con dither analogico ({:.1} dB)", qual.noise_floor_db))
+        (-0.8, true, format!("Piso de ruido coherente con dither analogico ({:.1} dB)", qual.noise_floor_db))
     } else {
-        (0.0, format!("Piso de ruido medido: {:.1} dB", qual.noise_floor_db))
+        (0.0, true, format!("Piso de ruido medido: {:.1} dB", qual.noise_floor_db))
     };
     evidences.push(Evidence {
         code: EvidenceCode::E08,
         value: Some(qual.noise_floor_db),
         llr: e08_llr,
-        applicable: true,
+        applicable: e08_app,
         description: e08_desc,
     });
 
@@ -285,8 +294,9 @@ pub fn run_dsp_analysis(
     });
 
     // E11: Inflado de contenedor
-    let (e11_llr, e11_desc) = if facts.is_lossless_declared && e01_hz <= 16500.0 {
-        (1.8, format!("Contenedor lossless ({} kbps) pero ancho de banda limitado a {} Hz (equivalente a 128 kbps)", facts.container_bitrate_kbps.unwrap_or(1411), spec.effective_bandwidth_hz))
+    let (e11_llr, e11_desc) = if facts.is_lossless_declared && cliff {
+        let cutoff_val = spec.cutoff_frequency_hz.unwrap_or(spec.effective_bandwidth_hz);
+        (1.8, format!("Contenedor sin pérdida ({} kbps) pero corte digital detectado a {} Hz", facts.container_bitrate_kbps.unwrap_or(1411), cutoff_val))
     } else {
         (0.0, "Bitrate del contenedor acorde al contenido".to_string())
     };
@@ -327,9 +337,10 @@ pub fn run_dsp_analysis(
     } else {
         (0.0, "Cabeceras y metadata documental limpias".to_string())
     };
+    let has_metadata_evidence = has_lossy_encoder_signature || is_extension_mismatch;
     evidences.push(Evidence {
         code: EvidenceCode::E13,
-        value: if strong_evidence_present { Some(1.0) } else { Some(0.0) },
+        value: if has_metadata_evidence { Some(1.0) } else { Some(0.0) },
         llr: e13_llr,
         applicable: true,
         description: e13_desc,
