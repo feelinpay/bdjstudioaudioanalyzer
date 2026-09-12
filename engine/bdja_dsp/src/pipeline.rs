@@ -323,33 +323,46 @@ pub fn run_dsp_analysis(
         description: e04_desc,
     });
 
-    // E05: Rejilla de bloques (FUERTE)
+    // E05: Rejilla de bloques (Informativa ante corte; no aplica ante espectro pleno §01)
     let e05_val = temp.block_grid_peak_ratio;
-    let (e05_llr, e05_desc) = if let Some(bs) = temp.detected_block_size {
-        if e05_val >= 0.08 {
-            strong_evidence_present = true;
+    let (e05_llr, e05_desc, e05_app) =
+        if spec.cutoff_kind == bdja_core::types::CutoffKind::FullSpectrum {
             (
-                2.2,
-                format!(
-                    "Estructura de tramas MDCT detectada: periodicidad de {} muestras ({:?})",
-                    bs,
-                    if bs == 576 { "MP3" } else { "AAC" }
-                ),
+                0.0,
+                "No concluyente: no hay corte digital que acompañe una rejilla de compresión"
+                    .to_string(),
+                false,
             )
+        } else if let Some(bs) = temp.detected_block_size {
+            if e05_val >= 0.08 {
+                (
+                    1.0,
+                    format!(
+                        "Estructura de tramas MDCT detectada: periodicidad de {} muestras ({:?})",
+                        bs,
+                        if bs == 576 { "MP3" } else { "AAC" }
+                    ),
+                    true,
+                )
+            } else {
+                (
+                    0.0,
+                    "Sin periodicidad de tramas MDCT detectable".to_string(),
+                    true,
+                )
+            }
         } else {
             (
                 0.0,
-                "Sin periodicidad de tramas MDCT detectable".to_string(),
+                "Sin periodicidad de bloques de compresion".to_string(),
+                true,
             )
-        }
-    } else {
-        (0.0, "Sin periodicidad de bloques de compresion".to_string())
-    };
+        };
     evidences.push(Evidence {
         code: EvidenceCode::E05,
         value: Some(e05_val),
         llr: e05_llr,
-        applicable: true,
+        applicable: e05_app,
         description: e05_desc,
     });
 

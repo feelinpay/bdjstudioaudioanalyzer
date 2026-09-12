@@ -1,4 +1,4 @@
-﻿# Rust
+# Rust
 target/
 engine/target/
 **/*.rs.bk
@@ -38,3 +38,10 @@ coverage/
 # Python
 __pycache__/
 *.pyc
+
+# Local audio test corpora
+tools/corpus_test/
+*.wav
+*.mp3
+*.flac
+*.m4a

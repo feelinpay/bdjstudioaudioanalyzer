@@ -67,18 +67,25 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
         .fold(f64::NEG_INFINITY, f64::max);
 
     // P0-2 & AUDIT v3.0: Detector de borde por ventana diferencial (E01)
-    // Busca caídas abruptas (brickwall filter típico de códecs lossy) entre ventanas contiguas de ~1.200 Hz
+    // Busca caídas abruptas (brickwall filter típico de códecs lossy) entre ventanas contiguas
     let step_hz = 1200.0;
-    let win_bins = ((step_hz / bin_hz).round() as usize).max(8);
-    // Escaneo proporcional desde el 36% de Nyquist (~8 kHz a 44.1k) hasta Nyquist - 400 Hz
-    let bin_8k = ((nyquist * 0.36 / bin_hz) as usize).clamp(win_bins, n_bins - 1);
-    let bin_nyquist_margin = (((nyquist - 400.0) / bin_hz) as usize).clamp(bin_8k, n_bins - 1);
+    let base_win_bins = ((step_hz / bin_hz).round() as usize).max(8);
+    // Escaneo proporcional desde el 36% de Nyquist (~8 kHz a 44.1k) hasta Nyquist - 300 Hz
+    let bin_8k = ((nyquist * 0.36 / bin_hz) as usize).clamp(base_win_bins, n_bins - 1);
+    let bin_nyquist_margin = (((nyquist - 300.0) / bin_hz) as usize).clamp(bin_8k, n_bins - 1);
 
     let mut detected_cliff: Option<(usize, f64, f64)> = None; // (cutoff_bin, drop, slope)
 
     // Barrido buscando escalón digital (brickwall)
-    let step_stride = (win_bins / 4).max(1);
+    let step_stride = (base_win_bins / 4).max(1);
     for b in (bin_8k..=bin_nyquist_margin).step_by(step_stride) {
+        let f_b = b as f64 * bin_hz;
+        // Ventana adaptativa: cerca de Nyquist (> 19 kHz a 44.1k) se ajusta para que la banda post-corte
+        // tenga espacio suficiente para medirse sin truncarse al borde de Nyquist.
+        let remaining_hz = (nyquist - f_b).max(250.0);
+        let cur_win_hz = step_hz.min(remaining_hz * 0.75).max(350.0);
+        let win_bins = ((cur_win_hz / bin_hz).round() as usize).max(4);
+
         let b_start = b.saturating_sub(win_bins);
         let b_end = (b + win_bins).min(n_bins);
 
@@ -92,23 +99,28 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
             let db_after = 10.0 * (p_after + 1e-12).log10();
             let drop = db_before - db_after;
 
-            // Condición de corte digital (§03 v3.0):
-            // 1. Umbral relajado a (ref_level - 70.0).max(-85.0) para no perder mezclas oscuras (-12 a -15 dB/oct)
-            // 2. Caída abrupta >= 20 dB en sólo 1.200 Hz (equivalente a > 50 dB/octava)
-            // 3. Supresión sostenida post-corte (no es un notch aislado)
-            if db_before >= (ref_level - 70.0).max(-85.0) && drop >= 20.0 {
-                let p_post: f64 = avg_power[b_end..n_bins]
-                    .iter()
-                    .map(|&p| p as f64)
-                    .sum::<f64>()
-                    / (n_bins - b_end).max(1) as f64;
+            // Condición de corte digital:
+            // 1. Energía antes del corte suficiente respecto al nivel de referencia
+            // 2. Caída abrupta (mínimo 16 dB en ventana estrecha / 18 dB estándar)
+            // 3. Supresión sostenida post-corte verificada en la banda superior
+            let min_drop = if cur_win_hz < 800.0 { 15.0 } else { 18.0 };
+            if db_before >= (ref_level - 70.0).max(-85.0) && drop >= min_drop {
+                let post_start = b + (win_bins / 2).max(1);
+                let p_post: f64 = if post_start < n_bins {
+                    avg_power[post_start..n_bins]
+                        .iter()
+                        .map(|&p| p as f64)
+                        .sum::<f64>()
+                        / (n_bins - post_start) as f64
+                } else {
+                    p_after
+                };
                 let db_post = 10.0 * (p_post + 1e-12).log10();
 
-                if db_post <= (db_before - 16.0) {
-                    let f_center = b as f64 * bin_hz;
-                    let delta_f = (f_center * 0.08).max(400.0);
-                    let f1 = (f_center - delta_f).max(100.0);
-                    let f2 = (f_center + delta_f).min(nyquist);
+                if db_post <= (db_before - 14.0) {
+                    let delta_f = (f_b * 0.08).max(350.0);
+                    let f1 = (f_b - delta_f).max(100.0);
+                    let f2 = (f_b + delta_f).min(nyquist);
                     let octaves = (f2 / f1).log2().max(0.1);
                     let slope = (drop / octaves).max(45.0);
 

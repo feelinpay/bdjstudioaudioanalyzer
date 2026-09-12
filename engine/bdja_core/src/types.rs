@@ -78,11 +78,7 @@ impl EvidenceCode {
     pub fn is_strong(&self) -> bool {
         matches!(
             self,
-            EvidenceCode::E01
-                | EvidenceCode::E04
-                | EvidenceCode::E05
-                | EvidenceCode::E07
-                | EvidenceCode::E13
+            EvidenceCode::E01 | EvidenceCode::E04 | EvidenceCode::E07 | EvidenceCode::E13
         )
     }
 

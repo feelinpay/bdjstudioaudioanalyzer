@@ -973,3 +973,159 @@ fn test_dsp_mp3_128_resampled_to_96k_is_convicted_as_transcode() {
         verdict_out.score_llr
     );
 }
+
+#[test]
+fn test_dsp_e05_inapplicable_when_full_spectrum() {
+    let sample_rate = 44100;
+    let mut windows_8192 = Vec::new();
+
+    let mut rng: u32 = 42424242;
+    let mut next_dither = || -> f32 {
+        rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+        (((rng % 20000) as f32 / 10000.0) - 1.0) * 0.00003
+    };
+
+    // Generar ventanas con espectro continuo hasta Nyquist (22.05 kHz)
+    // e inyectar periodicidad a 576 muestras para verificar que E05 se neutraliza
+    for phase_offset in 0..6 {
+        let mut win = vec![0.0f32; 8192];
+        for f_idx in 1..=100 {
+            let freq = 100.0 + f_idx as f32 * 218.0; // Distribuido densamente hasta 21.9 kHz
+            let amp = 1.0 / (1.0 + (freq / 4000.0).powf(0.8));
+            let phase = phase_offset as f32 * 0.3 + f_idx as f32 * 0.1;
+            for (i, s) in win.iter_mut().enumerate() {
+                let mod_576 = if i % 576 < 288 { 0.005 } else { -0.005 };
+                *s += amp
+                    * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                        .sin()
+                    / 35.0
+                    + mod_576
+                    + next_dither();
+            }
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 10000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.8,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let e05 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E05)
+        .unwrap();
+
+    assert!(
+        !e05.applicable,
+        "E05 debe ser INAPLICABLE cuando el espectro es continuo hasta Nyquist (FullSpectrum)"
+    );
+    assert_eq!(
+        e05.llr, 0.0,
+        "E05 no debe sumar LLR positivo ante FullSpectrum"
+    );
+
+    let verdict_out = bdja_verdict::evaluate_verdict(
+        &facts,
+        &output.evidences,
+        &output.guards_triggered,
+        output.is_strong_evidence_present,
+    );
+
+    assert_ne!(
+        verdict_out.verdict,
+        bdja_core::types::Verdict::Inconclusive,
+        "El material con espectro continuo no debe caer en Inconclusive debido a E05"
+    );
+}
+
+#[test]
+fn test_dsp_adaptive_nyquist_cliff_detection_high_frequencies() {
+    let sample_rate = 44100;
+    let mut windows_8192 = Vec::new();
+
+    // Simular un corte empinado a 19.6 kHz (caso latin_transcode_06)
+    let cutoff_hz = 19633.0f32;
+    for _ in 0..6 {
+        let mut win = vec![0.0f32; 8192];
+        for (i, s) in win.iter_mut().enumerate() {
+            let t = i as f32 / sample_rate as f32;
+            let mut val = 0.0f32;
+            for f_idx in 1..=80 {
+                let freq = 200.0 + f_idx as f32 * (cutoff_hz / 85.0);
+                if freq <= cutoff_hz {
+                    val += (2.0 * std::f32::consts::PI * freq * t).sin() / 40.0;
+                }
+            }
+            *s = val;
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 10000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.8,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let e01 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E01)
+        .unwrap();
+
+    assert!(
+        e01.llr >= 1.4,
+        "E01 debe condenar el corte brickwall a 19.6 kHz (obtenido: {})",
+        e01.llr
+    );
+    assert!(
+        output.cutoff_slope_db_oct >= 45.0,
+        "El corte a 19.6 kHz debe ser clasificado con pendiente abrupta (obtenido: {} dB/oct)",
+        output.cutoff_slope_db_oct
+    );
+}
