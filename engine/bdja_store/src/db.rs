@@ -271,4 +271,107 @@ impl ReportStore {
         }
         Ok(map)
     }
+
+    pub fn get_report_by_path(&self, path: &str) -> Result<Option<FileReport>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let query = "SELECT id, path, file_size, engine_rev, container, codec, sample_rate, bit_depth, channels, duration_ms, container_bitrate_kbps, is_lossless_declared, verdict, confidence, score_llr, effective_bandwidth_hz, cutoff_slope_db_oct, true_peak_dbtp, lufs_integrated, clipped_samples, dc_offset, dynamic_range_db, stereo_correlation, guards_json, evidences_json, verdict_summary, codec_type, spectrum_json FROM file_report WHERE path = ?1 LIMIT 1";
+
+        let mut stmt = conn.prepare(query)?;
+        let mut rows = stmt.query(params![path])?;
+
+        if let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let p: String = row.get(1)?;
+            let file_size: u64 = row.get(2)?;
+            let engine_rev: u32 = row.get(3)?;
+            let container: String = row.get(4)?;
+            let codec: String = row.get(5)?;
+            let sample_rate: u32 = row.get(6)?;
+            let bit_depth: Option<u16> = row.get(7)?;
+            let channels: u16 = row.get(8)?;
+            let duration_ms: u64 = row.get(9)?;
+            let container_bitrate_kbps: Option<u32> = row.get(10)?;
+            let is_lossless_declared: bool = row.get::<_, i64>(11)? != 0;
+            let verdict_str: String = row.get(12)?;
+            let confidence: f64 = row.get(13)?;
+            let score_llr: f64 = row.get(14)?;
+            let effective_bandwidth_hz: Option<u32> = row.get(15)?;
+            let cutoff_slope_db_oct: Option<f64> = row.get(16)?;
+            let true_peak_dbtp: Option<f64> = row.get(17)?;
+            let lufs_integrated: Option<f64> = row.get(18)?;
+            let clipped_samples: u64 = row.get(19)?;
+            let dc_offset: Option<f64> = row.get(20)?;
+            let dynamic_range_db: Option<f64> = row.get(21)?;
+            let stereo_correlation: Option<f64> = row.get(22)?;
+            let guards_json: String = row.get(23)?;
+            let evidences_json: String = row.get(24)?;
+            let verdict_summary: String = row.get(25)?;
+            let codec_type_str: String = row.get(26).unwrap_or_else(|_| "Unknown".to_string());
+            let spectrum_json: String = row.get(27).unwrap_or_else(|_| "[]".to_string());
+
+            let verdict = match verdict_str.as_str() {
+                "LosslessVerified" => Verdict::LosslessVerified,
+                "LikelyLossless" => Verdict::LikelyLossless,
+                "Inconclusive" => Verdict::Inconclusive,
+                "Suspicious" => Verdict::Suspicious,
+                "ProbableTranscode" => Verdict::ProbableTranscode,
+                _ => Verdict::DeclaredLossy,
+            };
+
+            let guards_triggered: Vec<String> = serde_json::from_str(&guards_json).unwrap_or_default();
+            let evidences: Vec<Evidence> = serde_json::from_str(&evidences_json).unwrap_or_default();
+            let average_spectrum_db: Vec<f32> = serde_json::from_str(&spectrum_json).unwrap_or_else(|_| vec![-120.0; 256]);
+
+            let codec_type = match codec_type_str.as_str() {
+                "PcmS16Le" => bdja_core::types::Codec::PcmS16Le,
+                "PcmS24Le" => bdja_core::types::Codec::PcmS24Le,
+                "PcmS32Le" => bdja_core::types::Codec::PcmS32Le,
+                "PcmF32Le" => bdja_core::types::Codec::PcmF32Le,
+                "Flac" => bdja_core::types::Codec::Flac,
+                "Alac" => bdja_core::types::Codec::Alac,
+                "Mp3" => bdja_core::types::Codec::Mp3,
+                "Aac" => bdja_core::types::Codec::Aac,
+                "Vorbis" => bdja_core::types::Codec::Vorbis,
+                "Opus" => bdja_core::types::Codec::Opus,
+                _ => bdja_core::types::Codec::Unknown,
+            };
+
+            Ok(Some(FileReport {
+                file_id: id,
+                path: p,
+                file_size,
+                engine_rev,
+                facts: FormatFacts {
+                    container,
+                    codec,
+                    codec_type,
+                    sample_rate,
+                    bit_depth,
+                    channels,
+                    duration_ms,
+                    container_bitrate_kbps,
+                    is_lossless_declared,
+                },
+                verdict,
+                confidence,
+                score_llr,
+                effective_bandwidth_hz,
+                cutoff_slope_db_oct,
+                evidences,
+                quality: QualityMetrics {
+                    true_peak_dbtp,
+                    lufs_integrated,
+                    clipped_samples,
+                    dc_offset,
+                    dynamic_range_db,
+                    stereo_correlation,
+                },
+                guards_triggered,
+                verdict_summary,
+                average_spectrum_db,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }

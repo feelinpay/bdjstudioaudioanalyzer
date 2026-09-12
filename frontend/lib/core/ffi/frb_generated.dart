@@ -67,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -834745718;
+  int get rustContentHash => -663487758;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -87,6 +87,10 @@ abstract class RustLibApi extends BaseApi {
 
   Future<FileReportFfi> crateApiAnalyzeFileQuick({required String path});
 
+  Future<bool> crateApiCancelAllScans();
+
+  Future<bool> crateApiCancelScanJob({required PlatformInt64 jobId});
+
   Future<String> crateApiDiagnostics();
 
   Future<EngineInfoFfi> crateApiEngineInit({
@@ -102,6 +106,8 @@ abstract class RustLibApi extends BaseApi {
 
   Future<List<VolumeInfoFfi>> crateApiListSystemVolumes();
 
+  Future<ScanJobStatusFfi> crateApiPollScanJob({required PlatformInt64 jobId});
+
   Future<List<FileReportFfi>> crateApiQuerySavedReports({
     String? verdictFilter,
     String? search,
@@ -112,6 +118,12 @@ abstract class RustLibApi extends BaseApi {
   Future<List<FileReportFfi>> crateApiScanDirectoryAudio({
     required String rootPath,
     required int maxFiles,
+  });
+
+  Future<PlatformInt64> crateApiStartScanJob({
+    required List<String> roots,
+    required String throttleMode,
+    required bool skipCache,
   });
 }
 
@@ -210,7 +222,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "analyze_file_quick", argNames: ["path"]);
 
   @override
-  Future<String> crateApiDiagnostics() {
+  Future<bool> crateApiCancelAllScans() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -219,6 +231,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             generalizedFrbRustBinding,
             serializer,
             funcId: 4,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiCancelAllScansConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiCancelAllScansConstMeta =>
+      const TaskConstMeta(debugName: "cancel_all_scans", argNames: []);
+
+  @override
+  Future<bool> crateApiCancelScanJob({required PlatformInt64 jobId}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_i_64(jobId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiCancelScanJobConstMeta,
+        argValues: [jobId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiCancelScanJobConstMeta =>
+      const TaskConstMeta(debugName: "cancel_scan_job", argNames: ["jobId"]);
+
+  @override
+  Future<String> crateApiDiagnostics() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
             port: port_,
           );
         },
@@ -250,7 +317,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 7,
             port: port_,
           );
         },
@@ -276,7 +343,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_u_32,
@@ -302,7 +369,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 9,
             port: port_,
           );
         },
@@ -332,7 +399,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 10,
             port: port_,
           );
         },
@@ -361,7 +428,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 11,
             port: port_,
           );
         },
@@ -378,6 +445,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiListSystemVolumesConstMeta =>
       const TaskConstMeta(debugName: "list_system_volumes", argNames: []);
+
+  @override
+  Future<ScanJobStatusFfi> crateApiPollScanJob({required PlatformInt64 jobId}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_i_64(jobId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_scan_job_status_ffi,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPollScanJobConstMeta,
+        argValues: [jobId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPollScanJobConstMeta =>
+      const TaskConstMeta(debugName: "poll_scan_job", argNames: ["jobId"]);
 
   @override
   Future<List<FileReportFfi>> crateApiQuerySavedReports({
@@ -397,7 +492,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 13,
             port: port_,
           );
         },
@@ -431,7 +526,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 14,
             port: port_,
           );
         },
@@ -449,6 +544,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiScanDirectoryAudioConstMeta => const TaskConstMeta(
     debugName: "scan_directory_audio",
     argNames: ["rootPath", "maxFiles"],
+  );
+
+  @override
+  Future<PlatformInt64> crateApiStartScanJob({
+    required List<String> roots,
+    required String throttleMode,
+    required bool skipCache,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_String(roots, serializer);
+          sse_encode_String(throttleMode, serializer);
+          sse_encode_bool(skipCache, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 15,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiStartScanJobConstMeta,
+        argValues: [roots, throttleMode, skipCache],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiStartScanJobConstMeta => const TaskConstMeta(
+    debugName: "start_scan_job",
+    argNames: ["roots", "throttleMode", "skipCache"],
   );
 
   @protected
@@ -644,6 +775,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       dcOffset: dco_decode_opt_box_autoadd_f_64(arr[3]),
       dynamicRangeDb: dco_decode_opt_box_autoadd_f_64(arr[4]),
       stereoCorrelation: dco_decode_opt_box_autoadd_f_64(arr[5]),
+    );
+  }
+
+  @protected
+  ScanJobStatusFfi dco_decode_scan_job_status_ffi(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return ScanJobStatusFfi(
+      jobId: dco_decode_i_64(arr[0]),
+      isActive: dco_decode_bool(arr[1]),
+      isCompleted: dco_decode_bool(arr[2]),
+      totalFound: dco_decode_u_64(arr[3]),
+      analyzedCount: dco_decode_u_64(arr[4]),
+      currentPath: dco_decode_String(arr[5]),
+      newReports: dco_decode_list_file_report_ffi(arr[6]),
     );
   }
 
@@ -972,6 +1120,29 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ScanJobStatusFfi sse_decode_scan_job_status_ffi(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_jobId = sse_decode_i_64(deserializer);
+    var var_isActive = sse_decode_bool(deserializer);
+    var var_isCompleted = sse_decode_bool(deserializer);
+    var var_totalFound = sse_decode_u_64(deserializer);
+    var var_analyzedCount = sse_decode_u_64(deserializer);
+    var var_currentPath = sse_decode_String(deserializer);
+    var var_newReports = sse_decode_list_file_report_ffi(deserializer);
+    return ScanJobStatusFfi(
+      jobId: var_jobId,
+      isActive: var_isActive,
+      isCompleted: var_isCompleted,
+      totalFound: var_totalFound,
+      analyzedCount: var_analyzedCount,
+      currentPath: var_currentPath,
+      newReports: var_newReports,
+    );
+  }
+
+  @protected
   int sse_decode_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint16();
@@ -1255,6 +1426,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_f_64(self.dcOffset, serializer);
     sse_encode_opt_box_autoadd_f_64(self.dynamicRangeDb, serializer);
     sse_encode_opt_box_autoadd_f_64(self.stereoCorrelation, serializer);
+  }
+
+  @protected
+  void sse_encode_scan_job_status_ffi(
+    ScanJobStatusFfi self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.jobId, serializer);
+    sse_encode_bool(self.isActive, serializer);
+    sse_encode_bool(self.isCompleted, serializer);
+    sse_encode_u_64(self.totalFound, serializer);
+    sse_encode_u_64(self.analyzedCount, serializer);
+    sse_encode_String(self.currentPath, serializer);
+    sse_encode_list_file_report_ffi(self.newReports, serializer);
   }
 
   @protected

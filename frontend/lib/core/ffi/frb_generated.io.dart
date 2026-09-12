@@ -91,6 +91,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   QualityMetricsFfi dco_decode_quality_metrics_ffi(dynamic raw);
 
   @protected
+  ScanJobStatusFfi dco_decode_scan_job_status_ffi(dynamic raw);
+
+  @protected
   int dco_decode_u_16(dynamic raw);
 
   @protected
@@ -182,6 +185,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   QualityMetricsFfi sse_decode_quality_metrics_ffi(
     SseDeserializer deserializer,
   );
+
+  @protected
+  ScanJobStatusFfi sse_decode_scan_job_status_ffi(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -291,6 +297,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_quality_metrics_ffi(
     QualityMetricsFfi self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_scan_job_status_ffi(
+    ScanJobStatusFfi self,
     SseSerializer serializer,
   );
 

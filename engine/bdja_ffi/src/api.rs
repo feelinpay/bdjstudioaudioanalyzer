@@ -1,5 +1,8 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use parking_lot::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::Arc;
+use parking_lot::{Mutex, RwLock};
 use bdja_core::types::FileReport;
 use bdja_store::ReportStore;
 
@@ -7,7 +10,31 @@ pub const ENGINE_REV: u32 = 1;
 
 static INITIALIZED: RwLock<bool> = RwLock::new(false);
 static DATA_DIR: RwLock<Option<String>> = RwLock::new(None);
-static STORE: RwLock<Option<ReportStore>> = RwLock::new(None);
+static STORE: RwLock<Option<Arc<ReportStore>>> = RwLock::new(None);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScanJobStatusFfi {
+    pub job_id: i64,
+    pub is_active: bool,
+    pub is_completed: bool,
+    pub total_found: u64,
+    pub analyzed_count: u64,
+    pub current_path: String,
+    pub new_reports: Vec<FileReportFfi>,
+}
+
+struct ScanJob {
+    _job_id: i64,
+    cancel_token: Arc<AtomicBool>,
+    total_found: Arc<AtomicU64>,
+    analyzed_count: Arc<AtomicU64>,
+    current_path: Arc<RwLock<String>>,
+    is_completed: Arc<AtomicBool>,
+    pending_reports: Arc<Mutex<Vec<FileReportFfi>>>,
+}
+
+static NEXT_JOB_ID: AtomicI64 = AtomicI64::new(1);
+static ACTIVE_JOBS: RwLock<Option<HashMap<i64, ScanJob>>> = RwLock::new(None);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EngineInfoFfi {
@@ -148,10 +175,10 @@ pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineI
 
     let db_path = Path::new(&data_dir).join("bdj_audio_analyzer.db");
     match ReportStore::open(&db_path) {
-        Ok(store) => *store_lock = Some(store),
+        Ok(store) => *store_lock = Some(Arc::new(store)),
         Err(_) => {
             if let Ok(mem_store) = ReportStore::open_in_memory() {
-                *store_lock = Some(mem_store);
+                *store_lock = Some(Arc::new(mem_store));
             }
         }
     }
@@ -226,7 +253,125 @@ pub fn analyze_batch(paths: Vec<String>) -> Result<Vec<FileReportFfi>, String> {
     Ok(results)
 }
 
-/// Escanea una carpeta o unidad y analiza hasta `max_files` archivos de audio encontrados.
+/// Inicia un trabajo de escaneo masivo asincrono en segundo plano (soporta 100.000+ pistas).
+pub fn start_scan_job(
+    roots: Vec<String>,
+    throttle_mode: String,
+    skip_cache: bool,
+) -> Result<i64, String> {
+    if !*INITIALIZED.read() {
+        return Err("El motor no ha sido inicializado".to_string());
+    }
+
+    let job_id = NEXT_JOB_ID.fetch_add(1, Ordering::SeqCst);
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let total_found = Arc::new(AtomicU64::new(0));
+    let analyzed_count = Arc::new(AtomicU64::new(0));
+    let current_path = Arc::new(RwLock::new("Iniciando escaneo...".to_string()));
+    let is_completed = Arc::new(AtomicBool::new(false));
+    let pending_reports = Arc::new(Mutex::new(Vec::new()));
+
+    let job = ScanJob {
+        _job_id: job_id,
+        cancel_token: cancel_token.clone(),
+        total_found: total_found.clone(),
+        analyzed_count: analyzed_count.clone(),
+        current_path: current_path.clone(),
+        is_completed: is_completed.clone(),
+        pending_reports: pending_reports.clone(),
+    };
+
+    {
+        let mut jobs_lock = ACTIVE_JOBS.write();
+        let map = jobs_lock.get_or_insert_with(HashMap::new);
+        map.insert(job_id, job);
+    }
+
+    let store_arc = STORE.read().clone();
+    let root_paths: Vec<PathBuf> = roots.into_iter().map(PathBuf::from).collect();
+
+    std::thread::spawn(move || {
+        let cancel_clone = cancel_token.clone();
+        let total_clone = total_found.clone();
+        let count_clone = analyzed_count.clone();
+        let path_clone = current_path.clone();
+        let pending_clone = pending_reports.clone();
+
+        let _ = bdja_scan::scan_collection(
+            &root_paths,
+            &throttle_mode,
+            skip_cache,
+            store_arc,
+            cancel_clone,
+            move |report| {
+                let report_ffi = map_report_to_ffi(report);
+                pending_clone.lock().push(report_ffi);
+            },
+            move |count, total, path_display| {
+                total_clone.store(total, Ordering::Relaxed);
+                count_clone.store(count, Ordering::Relaxed);
+                *path_clone.write() = path_display;
+            },
+        );
+
+        is_completed.store(true, Ordering::SeqCst);
+    });
+
+    Ok(job_id)
+}
+
+/// Consulta el progreso y recoge nuevos reportes generados desde la ultima consulta.
+pub fn poll_scan_job(job_id: i64) -> Result<ScanJobStatusFfi, String> {
+    let jobs_lock = ACTIVE_JOBS.read();
+    let map = jobs_lock.as_ref().ok_or("No hay trabajos activos")?;
+    let job = map.get(&job_id).ok_or_else(|| format!("Trabajo {} no encontrado", job_id))?;
+
+    let is_completed = job.is_completed.load(Ordering::SeqCst);
+    let is_active = !is_completed;
+    let total_found = job.total_found.load(Ordering::Relaxed);
+    let analyzed_count = job.analyzed_count.load(Ordering::Relaxed);
+    let current_path = job.current_path.read().clone();
+    let new_reports = {
+        let mut lock = job.pending_reports.lock();
+        std::mem::take(&mut *lock)
+    };
+
+    Ok(ScanJobStatusFfi {
+        job_id,
+        is_active,
+        is_completed,
+        total_found,
+        analyzed_count,
+        current_path,
+        new_reports,
+    })
+}
+
+/// Cancela un trabajo de escaneo especifico en tiempo real.
+pub fn cancel_scan_job(job_id: i64) -> bool {
+    let jobs_lock = ACTIVE_JOBS.read();
+    if let Some(map) = jobs_lock.as_ref() {
+        if let Some(job) = map.get(&job_id) {
+            job.cancel_token.store(true, Ordering::SeqCst);
+            return true;
+        }
+    }
+    false
+}
+
+/// Cancela todos los trabajos de escaneo activos inmediatamente.
+pub fn cancel_all_scans() -> bool {
+    let jobs_lock = ACTIVE_JOBS.read();
+    if let Some(map) = jobs_lock.as_ref() {
+        for job in map.values() {
+            job.cancel_token.store(true, Ordering::SeqCst);
+        }
+        return true;
+    }
+    false
+}
+
+/// Escanea una carpeta o unidad y analiza hasta `max_files` archivos de audio encontrados (0 para ilimitado).
 pub fn scan_directory_audio(root_path: String, max_files: u32) -> Result<Vec<FileReportFfi>, String> {
     if !*INITIALIZED.read() {
         return Err("El motor no ha sido inicializado".to_string());
@@ -237,31 +382,34 @@ pub fn scan_directory_audio(root_path: String, max_files: u32) -> Result<Vec<Fil
         return Err(format!("La ruta no existe: {}", root_path));
     }
 
-    let mut found: Vec<PathBuf> = Vec::new();
-    for entry in jwalk::WalkDir::new(root).skip_hidden(true) {
-        if let Ok(e) = entry {
-            if e.file_type().is_file() && bdja_scan::is_audio_file(&e.path()) {
-                found.push(e.path());
-                if found.len() >= max_files as usize {
-                    break;
-                }
-            }
-        }
-    }
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let store_arc = STORE.read().clone();
+    let roots = vec![root.to_path_buf()];
 
-    let mut reports = Vec::new();
-    for p in found {
-        if let Ok(mut report) = bdja_scan::analyze_single_file(&p) {
-            if let Some(store) = STORE.read().as_ref() {
-                if let Ok(id) = store.save_report(&report) {
-                    report.file_id = id;
-                }
-            }
-            reports.push(map_report_to_ffi(report));
-        }
-    }
+    let reports_acc = Arc::new(Mutex::new(Vec::new()));
+    let reports_clone = reports_acc.clone();
+    let cancel_clone = cancel_token.clone();
 
-    Ok(reports)
+    let _ = bdja_scan::scan_collection(
+        &roots,
+        "turbo",
+        false,
+        store_arc,
+        cancel_token,
+        move |rep| {
+            let mut list = reports_clone.lock();
+            if max_files == 0 || list.len() < max_files as usize {
+                list.push(map_report_to_ffi(rep));
+            }
+            if max_files > 0 && list.len() >= max_files as usize {
+                cancel_clone.store(true, Ordering::Relaxed);
+            }
+        },
+        |_, _, _| {},
+    );
+
+    let res = std::mem::take(&mut *reports_acc.lock());
+    Ok(res)
 }
 
 /// Consulta reportes guardados en la base de datos local SQLite.

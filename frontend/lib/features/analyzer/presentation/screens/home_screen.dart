@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../../../core/ffi/api.dart';
 import '../../../../core/licensing/license_manager.dart';
@@ -34,6 +36,9 @@ class _HomeScreenState extends State<HomeScreen> {
   String _currentAnalyzingPath = '';
   int _analyzedCount = 0;
   int _totalToAnalyze = 0;
+  PlatformInt64? _currentJobId;
+  Timer? _pollTimer;
+  bool _cancelRequested = false;
 
   bool _isDragging = false;
   String _selectedFilter = 'ALL';
@@ -43,6 +48,30 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadVolumes();
+    _loadSavedReports();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadSavedReports() async {
+    try {
+      final saved = await querySavedReports(limit: 5000, offset: 0);
+      if (mounted && saved.isNotEmpty) {
+        setState(() {
+          for (final r in saved) {
+            if (!_allReports.any((x) => x.path == r.path)) {
+              _allReports.add(r);
+            }
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error cargando reportes guardados: $e');
+    }
   }
 
   Future<void> _loadVolumes() async {
@@ -62,18 +91,39 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _cancelCurrentScan() async {
+    _cancelRequested = true;
+    _pollTimer?.cancel();
+    final jobId = _currentJobId;
+    if (jobId != null) {
+      try {
+        await cancelScanJob(jobId: jobId);
+      } catch (e) {
+        debugPrint('Error cancelando escaneo: $e');
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _isAnalyzing = false;
+        _currentAnalyzingPath = 'Escaneo cancelado';
+        _currentJobId = null;
+      });
+    }
+  }
+
   Future<void> _analyzeFiles(List<String> paths) async {
     if (paths.isEmpty || _isAnalyzing) return;
 
     setState(() {
       _isAnalyzing = true;
+      _cancelRequested = false;
       _analyzedCount = 0;
       _totalToAnalyze = paths.length;
       _currentAnalyzingPath = 'Iniciando análisis...';
     });
 
     for (int i = 0; i < paths.length; i++) {
-      if (!mounted) break;
+      if (!mounted || _cancelRequested) break;
       final p = paths[i];
       setState(() {
         _currentAnalyzingPath = p;
@@ -82,7 +132,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       try {
         final report = await analyzeFile(path: p);
-        if (mounted) {
+        if (mounted && !_cancelRequested) {
           setState(() {
             final idx = _allReports.indexWhere((r) => r.path == report.path);
             if (idx >= 0) {
@@ -108,42 +158,90 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _scanFolder(String folderPath) async {
     if (_isAnalyzing) return;
 
+    _pollTimer?.cancel();
     setState(() {
       _isAnalyzing = true;
+      _cancelRequested = false;
       _analyzedCount = 0;
-      _totalToAnalyze = 100;
+      _totalToAnalyze = 0;
       _currentAnalyzingPath = 'Buscando archivos de audio en $folderPath...';
     });
 
     try {
-      final reports = await scanDirectoryAudio(rootPath: folderPath, maxFiles: 1000);
-      if (mounted) {
-        setState(() {
-          for (final r in reports) {
-            final idx = _allReports.indexWhere((x) => x.path == r.path);
-            if (idx >= 0) {
-              _allReports[idx] = r;
-            } else {
-              _allReports.insert(0, r);
+      final jobId = await startScanJob(
+        roots: [folderPath],
+        throttleMode: 'turbo',
+        skipCache: false,
+      );
+      _currentJobId = jobId;
+
+      _pollTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+        try {
+          final status = await pollScanJob(jobId: jobId);
+          if (!mounted) {
+            timer.cancel();
+            return;
+          }
+
+          setState(() {
+            _totalToAnalyze = status.totalFound.toInt();
+            _analyzedCount = status.analyzedCount.toInt();
+            if (status.currentPath.isNotEmpty) {
+              _currentAnalyzingPath = status.currentPath;
+            }
+
+            if (status.newReports.isNotEmpty) {
+              for (final r in status.newReports) {
+                final idx = _allReports.indexWhere((x) => x.path == r.path);
+                if (idx >= 0) {
+                  _allReports[idx] = r;
+                } else {
+                  _allReports.insert(0, r);
+                }
+              }
+            }
+          });
+
+          if (status.isCompleted || !status.isActive) {
+            timer.cancel();
+            if (mounted) {
+              setState(() {
+                _isAnalyzing = false;
+                _currentAnalyzingPath = '';
+                _currentJobId = null;
+              });
             }
           }
-        });
-      }
+        } catch (e) {
+          timer.cancel();
+          if (mounted) {
+            setState(() {
+              _isAnalyzing = false;
+              _currentAnalyzingPath = '';
+              _currentJobId = null;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error en escaneo masivo: $e'),
+                backgroundColor: AppColors.verdictTranscode,
+              ),
+            );
+          }
+        }
+      });
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al escanear carpeta: $e'),
-            backgroundColor: AppColors.verdictTranscode,
-          ),
-        );
-      }
-    } finally {
       if (mounted) {
         setState(() {
           _isAnalyzing = false;
           _currentAnalyzingPath = '';
+          _currentJobId = null;
         });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al iniciar escaneo: $e'),
+            backgroundColor: AppColors.verdictTranscode,
+          ),
+        );
       }
     }
   }
@@ -431,6 +529,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildScanningProgress() {
     final pct = _totalToAnalyze > 0 ? (_analyzedCount / _totalToAnalyze).clamp(0.0, 1.0) : 0.0;
+    final progressText = _totalToAnalyze > 0
+        ? 'Analizando audio... $_analyzedCount de $_totalToAnalyze (${(pct * 100).toStringAsFixed(0)}%)'
+        : (_analyzedCount > 0
+            ? 'Analizando audio... $_analyzedCount pistas procesadas'
+            : 'Descubriendo pistas de audio...');
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       decoration: BoxDecoration(
@@ -453,13 +557,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Analizando audio... $_analyzedCount de $_totalToAnalyze (${(pct * 100).toStringAsFixed(0)}%)',
+                      progressText,
                       style: const TextStyle(color: AppColors.textPrimary, fontSize: 12, fontWeight: FontWeight.bold),
                     ),
-                    Text(
-                      _currentAnalyzingPath.split(RegExp(r'[/\\]')).last,
-                      style: const TextStyle(color: AppColors.electricCyan, fontSize: 11.5, fontFamily: 'Consolas'),
-                      overflow: TextOverflow.ellipsis,
+                    Flexible(
+                      child: Text(
+                        _currentAnalyzingPath.split(RegExp(r'[/\\]')).last,
+                        style: const TextStyle(color: AppColors.electricCyan, fontSize: 11.5, fontFamily: 'Consolas'),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ],
                 ),
@@ -467,7 +573,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
-                    value: pct,
+                    value: _totalToAnalyze > 0 ? pct : null,
                     minHeight: 5,
                     backgroundColor: AppColors.surfaceBorder,
                     valueColor: const AlwaysStoppedAnimation(AppColors.electricCyan),
@@ -483,9 +589,7 @@ class _HomeScreenState extends State<HomeScreen> {
               side: const BorderSide(color: AppColors.verdictTranscode),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             ),
-            onPressed: () {
-              setState(() => _isAnalyzing = false);
-            },
+            onPressed: _cancelCurrentScan,
             child: const Text('Cancelar', style: TextStyle(fontSize: 12)),
           ),
         ],

@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -834745718;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -663487758;
 
 // Section: executor
 
@@ -140,6 +140,71 @@ fn wire__crate__api__analyze_file_quick_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::analyze_file_quick(api_path)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__cancel_all_scans_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cancel_all_scans",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::cancel_all_scans())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__cancel_scan_job_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cancel_scan_job",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_job_id = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::cancel_scan_job(api_job_id))?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -339,6 +404,39 @@ fn wire__crate__api__list_system_volumes_impl(
         },
     )
 }
+fn wire__crate__api__poll_scan_job_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "poll_scan_job",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_job_id = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::poll_scan_job(api_job_id)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__query_saved_reports_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -408,6 +506,42 @@ fn wire__crate__api__scan_directory_audio_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::scan_directory_audio(api_root_path, api_max_files)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__start_scan_job_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "start_scan_job",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_roots = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_throttle_mode = <String>::sse_decode(&mut deserializer);
+            let api_skip_cache = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok =
+                        crate::api::start_scan_job(api_roots, api_throttle_mode, api_skip_cache)?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -685,6 +819,28 @@ impl SseDecode for crate::api::QualityMetricsFfi {
     }
 }
 
+impl SseDecode for crate::api::ScanJobStatusFfi {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_jobId = <i64>::sse_decode(deserializer);
+        let mut var_isActive = <bool>::sse_decode(deserializer);
+        let mut var_isCompleted = <bool>::sse_decode(deserializer);
+        let mut var_totalFound = <u64>::sse_decode(deserializer);
+        let mut var_analyzedCount = <u64>::sse_decode(deserializer);
+        let mut var_currentPath = <String>::sse_decode(deserializer);
+        let mut var_newReports = <Vec<crate::api::FileReportFfi>>::sse_decode(deserializer);
+        return crate::api::ScanJobStatusFfi {
+            job_id: var_jobId,
+            is_active: var_isActive,
+            is_completed: var_isCompleted,
+            total_found: var_totalFound,
+            analyzed_count: var_analyzedCount,
+            current_path: var_currentPath,
+            new_reports: var_newReports,
+        };
+    }
+}
+
 impl SseDecode for u16 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -761,13 +917,17 @@ fn pde_ffi_dispatcher_primary_impl(
         1 => wire__crate__api__analyze_batch_impl(port, ptr, rust_vec_len, data_len),
         2 => wire__crate__api__analyze_file_impl(port, ptr, rust_vec_len, data_len),
         3 => wire__crate__api__analyze_file_quick_impl(port, ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__diagnostics_impl(port, ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__engine_init_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__export_reports_csv_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__export_reports_json_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__list_system_volumes_impl(port, ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__query_saved_reports_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__scan_directory_audio_impl(port, ptr, rust_vec_len, data_len),
+        4 => wire__crate__api__cancel_all_scans_impl(port, ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__cancel_scan_job_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__diagnostics_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__engine_init_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__export_reports_csv_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__export_reports_json_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__list_system_volumes_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__poll_scan_job_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__query_saved_reports_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__scan_directory_audio_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__start_scan_job_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -780,7 +940,7 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        6 => wire__crate__api__engine_revision_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__engine_revision_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -894,6 +1054,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::QualityMetricsFfi>
     for crate::api::QualityMetricsFfi
 {
     fn into_into_dart(self) -> crate::api::QualityMetricsFfi {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::ScanJobStatusFfi {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.job_id.into_into_dart().into_dart(),
+            self.is_active.into_into_dart().into_dart(),
+            self.is_completed.into_into_dart().into_dart(),
+            self.total_found.into_into_dart().into_dart(),
+            self.analyzed_count.into_into_dart().into_dart(),
+            self.current_path.into_into_dart().into_dart(),
+            self.new_reports.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::ScanJobStatusFfi {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::ScanJobStatusFfi>
+    for crate::api::ScanJobStatusFfi
+{
+    fn into_into_dart(self) -> crate::api::ScanJobStatusFfi {
         self
     }
 }
@@ -1120,6 +1303,19 @@ impl SseEncode for crate::api::QualityMetricsFfi {
         <Option<f64>>::sse_encode(self.dc_offset, serializer);
         <Option<f64>>::sse_encode(self.dynamic_range_db, serializer);
         <Option<f64>>::sse_encode(self.stereo_correlation, serializer);
+    }
+}
+
+impl SseEncode for crate::api::ScanJobStatusFfi {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i64>::sse_encode(self.job_id, serializer);
+        <bool>::sse_encode(self.is_active, serializer);
+        <bool>::sse_encode(self.is_completed, serializer);
+        <u64>::sse_encode(self.total_found, serializer);
+        <u64>::sse_encode(self.analyzed_count, serializer);
+        <String>::sse_encode(self.current_path, serializer);
+        <Vec<crate::api::FileReportFfi>>::sse_encode(self.new_reports, serializer);
     }
 }
 

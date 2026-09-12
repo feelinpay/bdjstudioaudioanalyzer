@@ -7,8 +7,9 @@ import 'frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `generate_spectrum_curve`, `map_report_to_ffi`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `map_report_to_ffi`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ScanJob`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Devuelve la revision del motor nativo.
 int engineRevision() => RustLib.instance.api.crateApiEngineRevision();
@@ -38,7 +39,29 @@ Future<FileReportFfi> analyzeFileQuick({required String path}) =>
 Future<List<FileReportFfi>> analyzeBatch({required List<String> paths}) =>
     RustLib.instance.api.crateApiAnalyzeBatch(paths: paths);
 
-/// Escanea una carpeta o unidad y analiza hasta `max_files` archivos de audio encontrados.
+/// Inicia un trabajo de escaneo masivo asincrono en segundo plano (soporta 100.000+ pistas).
+Future<PlatformInt64> startScanJob({
+  required List<String> roots,
+  required String throttleMode,
+  required bool skipCache,
+}) => RustLib.instance.api.crateApiStartScanJob(
+  roots: roots,
+  throttleMode: throttleMode,
+  skipCache: skipCache,
+);
+
+/// Consulta el progreso y recoge nuevos reportes generados desde la ultima consulta.
+Future<ScanJobStatusFfi> pollScanJob({required PlatformInt64 jobId}) =>
+    RustLib.instance.api.crateApiPollScanJob(jobId: jobId);
+
+/// Cancela un trabajo de escaneo especifico en tiempo real.
+Future<bool> cancelScanJob({required PlatformInt64 jobId}) =>
+    RustLib.instance.api.crateApiCancelScanJob(jobId: jobId);
+
+/// Cancela todos los trabajos de escaneo activos inmediatamente.
+Future<bool> cancelAllScans() => RustLib.instance.api.crateApiCancelAllScans();
+
+/// Escanea una carpeta o unidad y analiza hasta `max_files` archivos de audio encontrados (0 para ilimitado).
 Future<List<FileReportFfi>> scanDirectoryAudio({
   required String rootPath,
   required int maxFiles,
@@ -293,6 +316,49 @@ class QualityMetricsFfi {
           dcOffset == other.dcOffset &&
           dynamicRangeDb == other.dynamicRangeDb &&
           stereoCorrelation == other.stereoCorrelation;
+}
+
+class ScanJobStatusFfi {
+  final PlatformInt64 jobId;
+  final bool isActive;
+  final bool isCompleted;
+  final BigInt totalFound;
+  final BigInt analyzedCount;
+  final String currentPath;
+  final List<FileReportFfi> newReports;
+
+  const ScanJobStatusFfi({
+    required this.jobId,
+    required this.isActive,
+    required this.isCompleted,
+    required this.totalFound,
+    required this.analyzedCount,
+    required this.currentPath,
+    required this.newReports,
+  });
+
+  @override
+  int get hashCode =>
+      jobId.hashCode ^
+      isActive.hashCode ^
+      isCompleted.hashCode ^
+      totalFound.hashCode ^
+      analyzedCount.hashCode ^
+      currentPath.hashCode ^
+      newReports.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ScanJobStatusFfi &&
+          runtimeType == other.runtimeType &&
+          jobId == other.jobId &&
+          isActive == other.isActive &&
+          isCompleted == other.isCompleted &&
+          totalFound == other.totalFound &&
+          analyzedCount == other.analyzedCount &&
+          currentPath == other.currentPath &&
+          newReports == other.newReports;
 }
 
 class VolumeInfoFfi {

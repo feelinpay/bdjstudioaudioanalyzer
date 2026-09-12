@@ -13,6 +13,8 @@ bdja_verdict = { path = "../bdja_verdict" }
 bdja_store = { path = "../bdja_store" }
 jwalk = "0.8"
 crossbeam-channel = "0.5"
+rayon = "1.10"
+num_cpus = "1.16"
 blake3 = "1.5"
 thiserror = "2.0"
 tracing = "0.1"
