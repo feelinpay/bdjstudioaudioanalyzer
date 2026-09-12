@@ -16,7 +16,9 @@ fn print_usage() {
     println!("  bdja_cli analyze <ruta_archivo> [--json]              Analiza un archivo individual de audio");
     println!("  bdja_cli scan <ruta_directorio>                       Escanea una carpeta o biblioteca de audio");
     println!("  bdja_cli validate <corpus_dir|manifiesto.csv>         Valida precisión, recall y tasa de falsos positivos (FPR)");
+    println!("  bdja_cli validate --lossless-dir <dir> --transcode-dir <dir>  Valida usando dos carpetas independientes");
     println!("  bdja_cli calibrate <corpus_dir|manifiesto.csv>        Calcula distribución de LLR, percentiles y umbrales óptimos");
+    println!("  bdja_cli calibrate --lossless-dir <dir> --transcode-dir <dir> Calcula umbrales óptimos usando dos carpetas");
     println!("  bdja_cli version                                      Muestra la revisión del motor y versión");
     println!("  bdja_cli help                                         Muestra esta ayuda");
 }
@@ -227,6 +229,26 @@ struct CorpusSample {
     is_transcode: bool,
 }
 
+fn collect_audio_from_dir(dir: &Path, is_transcode: bool) -> Result<Vec<CorpusSample>, String> {
+    if !dir.exists() {
+        return Err(format!("El directorio '{}' no existe", dir.display()));
+    }
+    let mut samples = Vec::new();
+    for e in jwalk::WalkDir::new(dir)
+        .skip_hidden(true)
+        .into_iter()
+        .flatten()
+    {
+        if e.file_type().is_file() && bdja_scan::is_audio_file(&e.path()) {
+            samples.push(CorpusSample {
+                path: e.path(),
+                is_transcode,
+            });
+        }
+    }
+    Ok(samples)
+}
+
 fn load_corpus_samples(target_str: &str) -> Result<Vec<CorpusSample>, String> {
     let target_path = Path::new(target_str);
     if !target_path.exists() {
@@ -326,6 +348,77 @@ fn load_corpus_samples(target_str: &str) -> Result<Vec<CorpusSample>, String> {
     Ok(samples)
 }
 
+fn parse_corpus_args(args: &[String]) -> Result<(String, Vec<CorpusSample>), String> {
+    let mut lossless_dir: Option<&str> = None;
+    let mut transcode_dir: Option<&str> = None;
+    let mut manifest_path: Option<&str> = None;
+    let mut positional: Option<&str> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--lossless-dir" => {
+                if i + 1 < args.len() {
+                    lossless_dir = Some(&args[i + 1]);
+                    i += 2;
+                } else {
+                    return Err("Falta la ruta para --lossless-dir".to_string());
+                }
+            }
+            "--transcode-dir" => {
+                if i + 1 < args.len() {
+                    transcode_dir = Some(&args[i + 1]);
+                    i += 2;
+                } else {
+                    return Err("Falta la ruta para --transcode-dir".to_string());
+                }
+            }
+            "--manifest" => {
+                if i + 1 < args.len() {
+                    manifest_path = Some(&args[i + 1]);
+                    i += 2;
+                } else {
+                    return Err("Falta la ruta para --manifest".to_string());
+                }
+            }
+            other => {
+                if !other.starts_with("--") && positional.is_none() {
+                    positional = Some(other);
+                }
+                i += 1;
+            }
+        }
+    }
+
+    if lossless_dir.is_some() || transcode_dir.is_some() {
+        if lossless_dir.is_none() || transcode_dir.is_none() {
+            return Err(
+                "Debe especificar ambos: --lossless-dir <dir> y --transcode-dir <dir>".to_string(),
+            );
+        }
+        let l_dir = lossless_dir.unwrap();
+        let t_dir = transcode_dir.unwrap();
+        let mut samples = collect_audio_from_dir(Path::new(l_dir), false)?;
+        let n_l = samples.len();
+        let mut trans = collect_audio_from_dir(Path::new(t_dir), true)?;
+        let n_t = trans.len();
+        samples.append(&mut trans);
+        let desc = format!(
+            "Carpetas independientes (Lossless: '{}' [{} pistas], Transcode: '{}' [{} pistas])",
+            l_dir, n_l, t_dir, n_t
+        );
+        return Ok((desc, samples));
+    }
+
+    if let Some(target) = manifest_path.or(positional) {
+        let samples = load_corpus_samples(target)?;
+        let desc = format!("Corpus: '{}'", target);
+        return Ok((desc, samples));
+    }
+
+    Err("Debe especificar un corpus: '--lossless-dir <dir> --transcode-dir <dir>', '--manifest <csv>' o una ruta posicional.".to_string())
+}
+
 fn percentile(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
@@ -353,19 +446,11 @@ fn std_dev(scores: &[f64], mean: f64) -> f64 {
     variance.sqrt()
 }
 
-fn run_validate(target_str: &str) {
-    let samples = match load_corpus_samples(target_str) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Error cargando corpus: {}", e);
-            std::process::exit(1);
-        }
-    };
-
+fn run_validate(target_desc: &str, samples: Vec<CorpusSample>) {
     println!("============================================================");
     println!(" BDJ STUDIO AUDIO ANALYZER — VALIDACIÓN FORENSE DE CORPUS");
     println!("============================================================");
-    println!("Objetivo: {}", target_str);
+    println!("Objetivo: {}", target_desc);
     println!("Muestras encontradas para validación: {}", samples.len());
 
     if samples.is_empty() {
@@ -479,19 +564,11 @@ fn run_validate(target_str: &str) {
     println!("============================================================");
 }
 
-fn run_calibrate(target_str: &str) {
-    let samples = match load_corpus_samples(target_str) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Error cargando corpus: {}", e);
-            std::process::exit(1);
-        }
-    };
-
+fn run_calibrate(target_desc: &str, samples: Vec<CorpusSample>) {
     println!("============================================================");
     println!(" BDJ STUDIO AUDIO ANALYZER — CALIBRACIÓN FORENSE DE CORPUS");
     println!("============================================================");
-    println!("Objetivo: {}", target_str);
+    println!("Objetivo: {}", target_desc);
     println!("Muestras cargadas: {}", samples.len());
 
     let mut lossless_scores: Vec<f64> = Vec::new();
@@ -522,6 +599,15 @@ fn run_calibrate(target_str: &str) {
 
     let n_lossless = lossless_scores.len();
     let n_transcode = transcode_scores.len();
+
+    if n_lossless < 50 || n_transcode < 50 {
+        println!("------------------------------------------------------------");
+        println!(
+            "  [AVISO ESTADÍSTICO] Muestras por clase bajas (Lossless: {}, Transcode: {}).\n  Se recomienda un mínimo de 50 muestras por clase para que el umbral óptimo sea estadísticamente representativo.",
+            n_lossless, n_transcode
+        );
+        println!("------------------------------------------------------------");
+    }
 
     let mean_lossless = lossless_scores.iter().sum::<f64>() / n_lossless as f64;
     let mean_transcode = transcode_scores.iter().sum::<f64>() / n_transcode as f64;
@@ -731,27 +817,33 @@ fn main() {
         }
         "validate" => {
             if args.len() < 3 {
-                eprintln!("Uso: bdja_cli validate <corpus_dir|manifiesto.csv> [--manifest <csv>]");
+                eprintln!("Uso: bdja_cli validate <corpus_dir|manifiesto.csv>");
+                eprintln!("     bdja_cli validate --manifest <manifiesto.csv>");
+                eprintln!("     bdja_cli validate --lossless-dir <dir> --transcode-dir <dir>");
                 return;
             }
-            let target = if args[2] == "--manifest" && args.len() > 3 {
-                &args[3]
-            } else {
-                &args[2]
-            };
-            run_validate(target);
+            match parse_corpus_args(&args[2..]) {
+                Ok((desc, samples)) => run_validate(&desc, samples),
+                Err(e) => {
+                    eprintln!("Error en parámetros de validación: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         "calibrate" => {
             if args.len() < 3 {
-                eprintln!("Uso: bdja_cli calibrate <corpus_dir|manifiesto.csv> [--manifest <csv>]");
+                eprintln!("Uso: bdja_cli calibrate <corpus_dir|manifiesto.csv>");
+                eprintln!("     bdja_cli calibrate --manifest <manifiesto.csv>");
+                eprintln!("     bdja_cli calibrate --lossless-dir <dir> --transcode-dir <dir>");
                 return;
             }
-            let target = if args[2] == "--manifest" && args.len() > 3 {
-                &args[3]
-            } else {
-                &args[2]
-            };
-            run_calibrate(target);
+            match parse_corpus_args(&args[2..]) {
+                Ok((desc, samples)) => run_calibrate(&desc, samples),
+                Err(e) => {
+                    eprintln!("Error en parámetros de calibración: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         "version" | "-v" | "--version" => {
             println!(
