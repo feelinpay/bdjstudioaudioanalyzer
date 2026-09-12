@@ -5,7 +5,7 @@ use bdja_core::types::FileReport;
 
 pub fn export_to_json(reports: &[FileReport], path: &Path) -> std::io::Result<()> {
     let json = serde_json::to_string_pretty(reports)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     let mut file = File::create(path)?;
     file.write_all(json.as_bytes())?;
     Ok(())

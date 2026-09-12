@@ -39,9 +39,11 @@ pub fn analyze_quality(
         let s = samples_mono[i].abs();
         if s > 0.85 {
             // Sinc interpolation at halfway point: t = 0.5
-            // sinc(0.5) = 2/pi ≈ 0.6366, sinc(1.5) = -2/(3*pi) ≈ -0.2122
-            let interp_half = (samples_mono[i] * 0.6366 + samples_mono[i + 1] * 0.6366
-                - samples_mono[i - 1] * 0.2122 - samples_mono[i + 2] * 0.2122).abs();
+            // sinc(0.5) = 2/pi, sinc(1.5) = -2/(3*pi)
+            let c1 = std::f32::consts::FRAC_2_PI;
+            let c2 = std::f32::consts::FRAC_2_PI / 3.0;
+            let interp_half = (samples_mono[i] * c1 + samples_mono[i + 1] * c1
+                - samples_mono[i - 1] * c2 - samples_mono[i + 2] * c2).abs();
             if interp_half > true_peak_linear {
                 true_peak_linear = interp_half;
             }
@@ -97,11 +99,9 @@ pub fn analyze_quality(
     let mut real_bit_depth = declared_bits;
     let mut bit_depth_inflated = false;
 
-    if declared_bits >= 24 {
-        if noise_floor_db > -96.0 || min_nonzero_mag > 2.5e-5 {
-            real_bit_depth = 16;
-            bit_depth_inflated = true; // Declares 24-bit but content fits in 16-bit!
-        }
+    if declared_bits >= 24 && (noise_floor_db > -96.0 || min_nonzero_mag > 2.5e-5) {
+        real_bit_depth = 16;
+        bit_depth_inflated = true; // Declares 24-bit but content fits in 16-bit!
     }
 
     QualityAnalysis {

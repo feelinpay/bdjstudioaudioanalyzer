@@ -115,11 +115,9 @@ pub fn analyze_stereo(
 
             // If global/broadband indicates noticeable stereo divergence (< 0.85),
             // but above cutoff channels become practically identical (> 0.985):
-            if global_correlation < 0.85 && hf_corr > 0.985 {
-                if detected_crossover.is_none() {
-                    detected_crossover = Some(cutoff as u32);
-                    high_band_correlation = hf_corr;
-                }
+            if global_correlation < 0.85 && hf_corr > 0.985 && detected_crossover.is_none() {
+                detected_crossover = Some(cutoff as u32);
+                high_band_correlation = hf_corr;
             }
         }
     }

@@ -75,10 +75,8 @@ pub fn analyze_temporal(
             if energy_post > 0.05 && energy_pre > 0.0001 {
                 let ratio = (energy_pre / energy_post) as f64;
                 // If pre-attack has strange HF smear
-                if ratio > 0.15 && ratio < 0.85 {
-                    if ratio > max_pre_echo {
-                        max_pre_echo = ratio;
-                    }
+                if ratio > 0.15 && ratio < 0.85 && ratio > max_pre_echo {
+                    max_pre_echo = ratio;
                 }
             }
         }

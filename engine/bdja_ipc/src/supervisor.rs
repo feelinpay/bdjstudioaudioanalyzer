@@ -49,10 +49,7 @@ impl WorkerProcess {
     }
 
     pub fn is_alive(&mut self) -> bool {
-        match self.child.try_wait() {
-            Ok(None) => true,
-            _ => false,
-        }
+        matches!(self.child.try_wait(), Ok(None))
     }
 
     pub fn shutdown(&mut self) {
@@ -152,7 +149,7 @@ impl WorkerSupervisor {
         };
 
         match worker.request(&req) {
-            Ok(WorkerResponse::Success(report)) => Ok(report),
+            Ok(WorkerResponse::Success(report)) => Ok(*report),
             Ok(WorkerResponse::Error(err)) => Err(err),
             Ok(WorkerResponse::Pong) => Err("Respuesta inesperada del worker: Pong".to_string()),
             Err(e) => {

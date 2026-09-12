@@ -11,7 +11,7 @@ pub enum WorkerRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkerResponse {
-    Success(FileReport),
+    Success(Box<FileReport>),
     Error(String),
     Pong,
 }

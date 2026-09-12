@@ -246,10 +246,8 @@ impl ReportStore {
         })?;
 
         let mut list = Vec::new();
-        for r in rows {
-            if let Ok(item) = r {
-                list.push(item);
-            }
+        for item in rows.flatten() {
+            list.push(item);
         }
         Ok(list)
     }
@@ -264,10 +262,8 @@ impl ReportStore {
         })?;
 
         let mut map = HashMap::new();
-        for r in rows {
-            if let Ok((v, count)) = r {
-                map.insert(v, count);
-            }
+        for (v, count) in rows.flatten() {
+            map.insert(v, count);
         }
         Ok(map)
     }

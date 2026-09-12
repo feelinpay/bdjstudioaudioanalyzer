@@ -13,7 +13,7 @@ fn main() {
             Ok(WorkerRequest::AnalyzeFile { path, .. }) => {
                 let p = Path::new(&path);
                 let response = match bdja_scan::analyze_single_file(p) {
-                    Ok(report) => WorkerResponse::Success(report),
+                    Ok(report) => WorkerResponse::Success(Box::new(report)),
                     Err(err) => WorkerResponse::Error(err),
                 };
                 if write_message(&mut writer, &response).is_err() {

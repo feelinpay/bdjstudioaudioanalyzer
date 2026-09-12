@@ -144,11 +144,7 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     let is_lossless_declared = codec_type.is_lossless();
     let codec_name = codec_type.display_name().to_string();
 
-    let container_bitrate_kbps = if duration_ms > 0 {
-        Some(((file_size * 8) / duration_ms) as u32)
-    } else {
-        None
-    };
+    let container_bitrate_kbps = (file_size * 8).checked_div(duration_ms).map(|b| b as u32);
 
     let facts = FormatFacts {
         container: forensic.detected_magic_type.clone(),

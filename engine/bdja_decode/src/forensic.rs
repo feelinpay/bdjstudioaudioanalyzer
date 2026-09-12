@@ -66,14 +66,14 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
     };
 
     // Extension mismatch check: Declared lossless container, but actual binary is lossy bitstream
-    if (ext == "wav" && !is_riff_wav) || (ext == "flac" && !is_flac) || (ext == "aif" && !is_aiff) || (ext == "aiff" && !is_aiff) {
-        if is_mp3_id3 || is_mp3_sync || is_mp4 || is_ogg {
-            evidence.is_extension_mismatch = true;
-            evidence.descriptions.push(format!(
-                "Discrepancia crítica de extensión: declarada .{} pero el contenedor binario real es {}",
-                ext, evidence.detected_magic_type
-            ));
-        }
+    if ((ext == "wav" && !is_riff_wav) || (ext == "flac" && !is_flac) || (ext == "aif" && !is_aiff) || (ext == "aiff" && !is_aiff))
+        && (is_mp3_id3 || is_mp3_sync || is_mp4 || is_ogg)
+    {
+        evidence.is_extension_mismatch = true;
+        evidence.descriptions.push(format!(
+            "Discrepancia crítica de extensión: declarada .{} pero el contenedor binario real es {}",
+            ext, evidence.detected_magic_type
+        ));
     }
 
     // DJ metadata check: Standard ID3 chunks in WAV (Rekordbox / Serato / Traktor tags)
@@ -115,7 +115,7 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
         let slice = &header_buf[pos..max_len];
         let end_idx = slice
             .iter()
-            .position(|&b| b == 0 || b < 0x20 || b > 0x7E)
+            .position(|&b| b == 0 || !(0x20..=0x7E).contains(&b))
             .unwrap_or(slice.len());
         if let Ok(s) = std::str::from_utf8(&slice[..end_idx]) {
             let s_clean = s.trim().to_string();
@@ -126,13 +126,12 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
     }
 
     // Also read last 4KB for trailing tags (e.g. LAME tag at EOF in pseudo-WAV)
-    if file_len > 4096 {
-        if file.seek(SeekFrom::End(-4096)).is_ok() {
-            let mut tail_buf = [0u8; 4096];
-            if file.read_exact(&mut tail_buf).is_ok() {
-                if let Some(pos) = find_subsequence_pos(&tail_buf, b"LAME3.") {
-                    evidence.has_xing_lame_header = true;
-                    evidence.has_lossy_encoder_signature = true;
+    if file_len > 4096 && file.seek(SeekFrom::End(-4096)).is_ok() {
+        let mut tail_buf = [0u8; 4096];
+        if file.read_exact(&mut tail_buf).is_ok() {
+            if let Some(pos) = find_subsequence_pos(&tail_buf, b"LAME3.") {
+                evidence.has_xing_lame_header = true;
+                evidence.has_lossy_encoder_signature = true;
                     let end = std::cmp::min(pos + 9, tail_buf.len());
                     if let Ok(s) = std::str::from_utf8(&tail_buf[pos..end]) {
                         if evidence.encoder_string.is_none() {
@@ -143,7 +142,6 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
                 }
             }
         }
-    }
 
     evidence
 }

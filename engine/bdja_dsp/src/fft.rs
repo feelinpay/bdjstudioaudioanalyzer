@@ -8,6 +8,12 @@ pub struct FftProcessor {
     hann_1024: Vec<f32>,
 }
 
+impl Default for FftProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FftProcessor {
     pub fn new() -> Self {
         let mut planner = RealFftPlanner::<f32>::new();
