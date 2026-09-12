@@ -33,15 +33,28 @@ pub fn analyze_quality(
         };
     }
 
-    // 1. True Peak (with 4x oversampling approximation on peak samples)
-    let peak_linear = max_peak.max(1e-6);
-    let true_peak_linear = peak_linear * 1.05; // 0.4 dB crest oversampling headroom approximation
-    let true_peak_dbtp = (20.0 * true_peak_linear.log10()) as f64;
+    // 1. True Peak (with 4x inter-sample reconstruction over high-amplitude points)
+    let mut true_peak_linear = max_peak.max(1e-6);
+    for i in 2..(samples_mono.len().saturating_sub(2)) {
+        let s = samples_mono[i].abs();
+        if s > 0.85 {
+            // Sinc interpolation at halfway point: t = 0.5
+            // sinc(0.5) = 2/pi ≈ 0.6366, sinc(1.5) = -2/(3*pi) ≈ -0.2122
+            let interp_half = (samples_mono[i] * 0.6366 + samples_mono[i + 1] * 0.6366
+                - samples_mono[i - 1] * 0.2122 - samples_mono[i + 2] * 0.2122).abs();
+            if interp_half > true_peak_linear {
+                true_peak_linear = interp_half;
+            }
+        }
+    }
+    let true_peak_dbtp = (20.0 * (true_peak_linear as f64).log10()).clamp(-120.0, 12.0);
 
     // 2. RMS / Approximate Integrated LUFS (with basic high-shelf filter weighting)
     let mut sum_sq: f64 = 0.0;
     let mut min_nonzero_mag: f32 = 1.0;
     let mut zero_count: usize = 0;
+    let mut consecutive_clips: u64 = 0;
+    let mut current_consecutive: u64 = 0;
 
     for &s in samples_mono {
         let abs_s = s.abs();
@@ -50,15 +63,27 @@ pub fn analyze_quality(
         } else if abs_s < min_nonzero_mag {
             min_nonzero_mag = abs_s;
         }
+
+        if abs_s >= 0.9995 {
+            current_consecutive += 1;
+            if current_consecutive >= 3 {
+                consecutive_clips += 1;
+            }
+        } else {
+            current_consecutive = 0;
+        }
+
         sum_sq += (s as f64) * (s as f64);
     }
+
+    let actual_clipped = clipped_samples.max(consecutive_clips);
 
     let rms = (sum_sq / samples_mono.len() as f64).sqrt().max(1e-9);
     // EBU R128 integrated loudness is approximately -0.691 + 10 log10(sum_sq / N)
     let lufs_integrated = (-0.691 + 10.0 * (sum_sq / samples_mono.len() as f64).log10()).clamp(-120.0, 0.0);
 
-    // 3. Dynamic Range
-    let crest_factor_db = (20.0 * (peak_linear as f64 / rms).log10()).max(0.0);
+    // 3. Dynamic Range (Crest factor in dB)
+    let crest_factor_db = (20.0 * (true_peak_linear as f64 / rms).log10()).max(0.0);
     let dynamic_range_db = crest_factor_db.clamp(0.0, 40.0);
 
     // 4. Noise floor & Digital silence
@@ -83,7 +108,7 @@ pub fn analyze_quality(
         metrics: QualityMetrics {
             true_peak_dbtp: Some(true_peak_dbtp),
             lufs_integrated: Some(lufs_integrated),
-            clipped_samples,
+            clipped_samples: actual_clipped,
             dc_offset: Some(dc_offset),
             dynamic_range_db: Some(dynamic_range_db),
             stereo_correlation,

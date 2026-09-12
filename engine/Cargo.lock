@@ -115,6 +115,7 @@ dependencies = [
  "bdja_scan",
  "bdja_store",
  "bdja_verdict",
+ "serde_json",
 ]
 
 [[package]]
@@ -221,8 +222,8 @@ name = "bdja_worker"
 version = "1.0.0"
 dependencies = [
  "bdja_core",
- "bdja_decode",
- "bdja_dsp",
+ "bdja_ipc",
+ "bdja_scan",
  "bincode",
  "serde",
 ]

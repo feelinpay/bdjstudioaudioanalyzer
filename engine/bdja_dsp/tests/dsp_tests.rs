@@ -194,3 +194,60 @@ fn test_dsp_natural_band_limited_guard() {
         );
     }
 }
+
+#[test]
+fn test_dsp_joint_stereo_collapse() {
+    let sample_rate = 44100;
+    let n = 8192;
+    let mut left = vec![0.0f32; n];
+    let mut right = vec![0.0f32; n];
+
+    // Low frequencies (decorrelated stereo):
+    for i in 0..n {
+        let t = i as f32 / sample_rate as f32;
+        left[i] = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.5;
+        right[i] = (2.0 * std::f32::consts::PI * 880.0 * t).sin() * 0.5;
+    }
+
+    // High frequencies (> 12 kHz) (collapsed into identical mono channel, intensity stereo):
+    for i in 0..n {
+        let t = i as f32 / sample_rate as f32;
+        let hf = (2.0 * std::f32::consts::PI * 14000.0 * t).sin() * 0.3;
+        left[i] += hf;
+        right[i] += hf; // Identical!
+    }
+
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 180000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &[left.clone()],
+        &[],
+        &left,
+        &right,
+        0.8,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let e07 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E07);
+    assert!(e07.is_some(), "E07 must be present");
+    let e07_ev = e07.unwrap();
+    assert!(e07_ev.applicable, "E07 must be applicable for stereo");
+    assert!(e07_ev.llr > 2.0, "E07 LLR {} must be > 2.0 for intensity stereo collapse", e07_ev.llr);
+    assert!(output.is_strong_evidence_present, "Joint stereo collapse must count as strong evidence");
+}
