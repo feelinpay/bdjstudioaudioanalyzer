@@ -123,7 +123,7 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
                 let f1 = (f_b - delta_f).max(100.0);
                 let f2 = (f_b + delta_f).min(nyquist);
                 let octaves = (f2 / f1).log2().max(0.1);
-                let slope = (drop / octaves).max(45.0);
+                let slope = drop / octaves;
 
                 detected_cliff = Some((b, drop, slope));
                 break; // Tomar el primer corte artificial verificado

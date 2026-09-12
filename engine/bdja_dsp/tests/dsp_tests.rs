@@ -449,20 +449,19 @@ fn test_dsp_mp3_320_transcode_is_convicted() {
         e01.llr
     );
 
-    // 2. E02 debe estar activa y medir pendiente vertical
+    // 2. E02 debe ser inaplicable ante corte brick-wall (B-6: no duplicar E01)
     let e02 = output
         .evidences
         .iter()
         .find(|e| e.code == bdja_core::types::EvidenceCode::E02)
         .unwrap();
     assert!(
-        e02.applicable,
-        "E02 debe ser aplicable ante corte brick-wall"
+        !e02.applicable,
+        "E02 debe ser inaplicable ante corte brick-wall para no duplicar E01"
     );
-    assert!(
-        e02.llr >= 1.0,
-        "E02 debe penalizar con pendiente vertical, obtenido: {}",
-        e02.llr
+    assert_eq!(
+        e02.llr, 0.0,
+        "E02 debe aportar LLR=0.0 ante corte brick-wall"
     );
 
     // 3. Evaluar veredicto
@@ -1133,10 +1132,10 @@ fn test_dsp_adaptive_nyquist_cliff_detection_high_frequencies() {
 #[test]
 fn test_dsp_e02_slope_governs_natural_rolloff_penalty() {
     // B-4: Pendiente de 86.7 dB/oct en NaturalRolloff no debe recibir -1.0 de exoneración
-    let _facts = FormatFacts {
+    let _facts = bdja_core::types::FormatFacts {
         container: "WAV".to_string(),
-        codec: "PCM 16-bit".to_string(),
-        codec_type: Codec::PcmS16Le,
+        codec: "PCM".to_string(),
+        codec_type: bdja_core::types::Codec::PcmS16Le,
         sample_rate: 44100,
         bit_depth: Some(16),
         channels: 2,
@@ -1146,7 +1145,7 @@ fn test_dsp_e02_slope_governs_natural_rolloff_penalty() {
     };
 
     // Crear un fake SpectrumAnalysis con NaturalRolloff y 86.7 dB/oct
-    let spec = bdja_dsp::spectrum::SpectrumAnalysis {
+    let _spec = bdja_dsp::spectrum::SpectrumAnalysis {
         cutoff_kind: bdja_core::types::CutoffKind::NaturalRolloff,
         cutoff_frequency_hz: None,
         effective_bandwidth_hz: 18798,
@@ -1158,30 +1157,51 @@ fn test_dsp_e02_slope_governs_natural_rolloff_penalty() {
         upsampling_detected: false,
     };
 
-    // Comprobar la lógica de E02 en pipeline
-    let e02_val = spec.cutoff_slope_db_oct;
-    let (e02_llr, e02_desc, e02_app) = match spec.cutoff_kind {
-        bdja_core::types::CutoffKind::FullSpectrum => (0.0, String::new(), false),
-        bdja_core::types::CutoffKind::BrickwallCutoff
-        | bdja_core::types::CutoffKind::NaturalRolloff => {
-            if e02_val <= 24.0 {
-                (-1.0, "Roll-off suave".to_string(), true)
-            } else if e02_val <= 40.0 {
-                (0.0, "Roll-off moderado".to_string(), true)
-            } else if e02_val < 60.0 {
-                (0.8, "Pendiente pronunciada".to_string(), true)
-            } else {
-                (1.5, "Pendiente vertical brick-wall".to_string(), true)
+    // Comprobar la lógica de E02 en pipeline (B-6: solo aplicable en NaturalRolloff)
+    let eval_e02 = |kind: bdja_core::types::CutoffKind, slope: f64| -> (f64, String, bool) {
+        match kind {
+            bdja_core::types::CutoffKind::FullSpectrum => (0.0, String::new(), false),
+            bdja_core::types::CutoffKind::BrickwallCutoff => (
+                0.0,
+                "Corte brick-wall evaluado por E01 (E02 no duplica la evidencia)".to_string(),
+                false,
+            ),
+            bdja_core::types::CutoffKind::NaturalRolloff => {
+                if slope <= 24.0 {
+                    (-1.0, "Roll-off suave".to_string(), true)
+                } else if slope <= 40.0 {
+                    (0.0, "Roll-off moderado".to_string(), true)
+                } else if slope < 60.0 {
+                    (0.8, "Pendiente pronunciada".to_string(), true)
+                } else {
+                    (1.5, "Pendiente vertical brick-wall".to_string(), true)
+                }
             }
         }
     };
 
-    assert!(e02_app);
+    // 1. NaturalRolloff con pendiente empinada (86.7 dB/oct) -> Condena con LLR +1.5
+    let (llr_steep, desc_steep, app_steep) =
+        eval_e02(bdja_core::types::CutoffKind::NaturalRolloff, 86.7);
+    assert!(app_steep);
     assert_eq!(
-        e02_llr, 1.5,
-        "Pendiente de 86.7 dB/oct debe condenar con LLR=+1.5, no exonerar"
+        llr_steep, 1.5,
+        "Pendiente de 86.7 dB/oct en NaturalRolloff debe condenar con +1.5"
     );
-    assert!(e02_desc.contains("brick-wall"));
+    assert!(desc_steep.contains("brick-wall"));
+
+    // 2. NaturalRolloff con pendiente suave (18.0 dB/oct) -> Exonera con LLR -1.0
+    let (llr_gentle, _, app_gentle) = eval_e02(bdja_core::types::CutoffKind::NaturalRolloff, 18.0);
+    assert!(app_gentle);
+    assert_eq!(
+        llr_gentle, -1.0,
+        "Pendiente acústica de 18 dB/oct debe exonerar con -1.0"
+    );
+
+    // 3. BrickwallCutoff -> Inaplicable para no duplicar E01 (B-6)
+    let (llr_bw, _, app_bw) = eval_e02(bdja_core::types::CutoffKind::BrickwallCutoff, 95.0);
+    assert!(!app_bw, "E02 debe ser inaplicable ante BrickwallCutoff");
+    assert_eq!(llr_bw, 0.0, "E02 no debe sumar LLR ante BrickwallCutoff");
 }
 
 #[test]

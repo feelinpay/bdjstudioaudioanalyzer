@@ -239,7 +239,7 @@ fn collect_audio_from_dir(dir: &Path, is_transcode: bool) -> Result<Vec<CorpusSa
         .into_iter()
         .flatten()
     {
-        if e.file_type().is_file() && bdja_scan::is_audio_file(&e.path()) {
+        if e.file_type().is_file() && bdja_scan::is_analyzable(&e.path()) {
             samples.push(CorpusSample {
                 path: e.path(),
                 is_transcode,
@@ -317,7 +317,7 @@ fn load_corpus_samples(target_str: &str) -> Result<Vec<CorpusSample>, String> {
             .into_iter()
             .flatten()
         {
-            if e.file_type().is_file() && bdja_scan::is_audio_file(&e.path()) {
+            if e.file_type().is_file() && bdja_scan::is_analyzable(&e.path()) {
                 let p = e.path();
                 let path_lower = p.to_string_lossy().to_lowercase();
                 let is_transcode = path_lower.contains("transcode")

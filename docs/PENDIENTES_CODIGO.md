@@ -1,21 +1,21 @@
 # BDJ Studio Audio Analyzer — Pendientes a nivel de código
 
-> Actualizado con el diagnóstico de los 6 falsos negativos.
-> 3 bloqueantes (E05 cerrado; abiertos: E02 constante en NaturalRolloff, detector de borde, corpus real) · 3 números sin medir · 7 menores · v1.1 especificada.
+> Actualizado tras resolver B-4, B-5, B-6 y B-7.
+> 1 bloqueante externo abierto: Corpus real (100-200 másters propios) · 3 números sin medir · 7 menores · v1.1 especificada.
 
 BDJ Studio Audio Analyzer · pendientes a nivel de código
 
 # Pendientes del Audio Analyzer
 
-Actualizado con el desglose forense de la primera corrida de corpus. La causa raíz de los 20 inconclusos está identificada y es de una sola evidencia. Los 4 falsos positivos no son un defecto del motor: son archivos del generador sintético que sí tenían un corte real en los bytes.
+Actualizado con el desglose forense tras las correcciones de B-4 (E02 proporcional a pendiente), B-5 (detector de corte desacoplado y extrapolación log-lineal), B-6 (desactivación de E02 en BrickwallCutoff para evitar doble contabilidad) y B-7 (separación en dos niveles de extensiones analizables vs reconocidas no soportadas). En la última validación forense sobre 56 pistas: **0 FP (FPR = 0.00%)**, **25 TP**, **27 TN**, **2 FN**, **Recall = 92.59%**, **Exactitud Global = 96.30%**.
 
-**Bloqueantes** 3 **Confirmado** frontera de −4,00 inalcanzable **Menores** 7 **v1.1 especificada** 4 funciones
+**Bloqueantes** 1 (Corpus real) **Confirmado** frontera de −4,00 inalcanzable con sintéticos **Menores** 7 **v1.1 especificada** 4 funciones
 
 ## 0. Lo que ya está cerrado
 
 Para no volver sobre esto: todo lo siguiente quedó verificado en el código y no requiere más trabajo.
 
-Enum `Codec` con mapeo explícito · *seek* a 12 segmentos con respaldo · espectro real de punta a punta · `CutoffKind` con las tres ramas y E01 decidiendo por rama · umbrales como fracción de Nyquist · E02 aplicable ante corte · E04 y E08 no exoneran cuando hay corte · E01 como evidencia fuerte · E11 ante cualquier corte · diagnóstico de remuestreo con candidatos de 44,1 y 48 kHz · `catch_unwind` dentro de `analyze_single_file` · clipping por canal en las dos rutas · bit depth por `zero_lsb_ratio` · E06 normalizado · E05 por ventana contigua · LUFS con K-weighting y *gating* BS.1770-4 · piso de ruido por percentil · HWID derivado nativamente, fail-closed y comparación en tiempo constante · sin fallback silencioso a base en memoria · `user_version` y migraciones · tabla `scan_job` · SQL parametrizado con `ESCAPE` · caché con `mtime` y blake3 · export paginado · tope de 250 en `pending_reports` · reportes de error por archivo · CLI con `validate` y `calibrate` en tres modalidades · `bdja_ipc` y `bdja_worker` eliminados · CI con `fmt`, `clippy -D warnings`, `test`, `flutter analyze` y `flutter test`.
+Enum `Codec` con mapeo explícito · *seek* a 12 segmentos con respaldo · espectro real de punta a punta · `CutoffKind` con las tres ramas y E01 decidiendo por rama · umbrales como fracción de Nyquist · E02 desactivado en `BrickwallCutoff` para evitar duplicar evidencia (B-6) y activo con escala gradual en `NaturalRolloff` (B-4) · eliminación de `.max(45.0)` redundante en `spectrum.rs` · detección de corte desacoplada con ventana previa y extrapolación log-lineal de agudos 10-17 kHz frente a 19-22 kHz (B-5) · soporte de biblioteca en dos niveles para extensiones analizables vs reconocidas no soportadas sin pánico (B-7) · E04 y E08 no exoneran cuando hay corte · E01 como evidencia fuerte · E05 fuera de evidencias fuertes e inaplicable ante `FullSpectrum` (B-1) · regla rígida de 45 dB/oct revertida (B-2) · E11 ante cualquier corte · diagnóstico de remuestreo con candidatos de 44,1 y 48 kHz · `catch_unwind` dentro de `analyze_single_file` · clipping por canal en las dos rutas · bit depth por `zero_lsb_ratio` · E06 normalizado · E05 por ventana contigua · LUFS con K-weighting y *gating* BS.1770-4 · piso de ruido por percentil · HWID derivado nativamente, fail-closed y comparación en tiempo constante · sin fallback silencioso a base en memoria · `user_version` y migraciones · tabla `scan_job` · SQL parametrizado con `ESCAPE` · caché con `mtime` y blake3 · export paginado · tope de 250 en `pending_reports` · reportes de error por archivo · CLI con `validate` y `calibrate` en tres modalidades · `bdja_ipc` y `bdja_worker` eliminados · CI con `fmt`, `clippy -D warnings`, `test`, `flutter analyze` y `flutter test`.
 
 ## 01. E05 contamina el veredicto del material legítimo
 

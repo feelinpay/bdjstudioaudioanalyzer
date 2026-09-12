@@ -218,7 +218,7 @@ pub fn run_dsp_analysis(
         description: e01_desc,
     });
 
-    // E02: Pendiente del corte (§02 v3.0: siempre aplicable ante BrickwallCutoff o NaturalRolloff)
+    // E02: Pendiente del corte (B-6: aplicable solo ante NaturalRolloff; inaplicable ante BrickwallCutoff para evitar duplicar E01)
     let e02_val = spec.cutoff_slope_db_oct;
     let (e02_llr, e02_desc, e02_app) = match spec.cutoff_kind {
         bdja_core::types::CutoffKind::FullSpectrum => (
@@ -226,8 +226,12 @@ pub fn run_dsp_analysis(
             "Espectro plano hasta Nyquist sin pendiente de corte".to_string(),
             false,
         ),
-        bdja_core::types::CutoffKind::BrickwallCutoff
-        | bdja_core::types::CutoffKind::NaturalRolloff => {
+        bdja_core::types::CutoffKind::BrickwallCutoff => (
+            0.0,
+            "Corte brick-wall evaluado por E01 (E02 no duplica la evidencia)".to_string(),
+            false,
+        ),
+        bdja_core::types::CutoffKind::NaturalRolloff => {
             if e02_val <= 24.0 {
                 (
                     -1.0,

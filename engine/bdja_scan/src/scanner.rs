@@ -7,17 +7,40 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-pub const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "wav", "flac", "aif", "aiff", "mp3", "m4a", "aac", "ogg", "alac", "wma",
+/// Extensiones analizables exhaustivamente por el motor DSP (decodificación vía Symphonia)
+pub const ANALYZABLE_EXTENSIONS: &[&str] = &[
+    "wav", "flac", "aif", "aiff", "mp3", "m4a", "aac", "ogg", "alac",
 ];
 
+/// Extensiones de audio reconocidas en la biblioteca del DJ para mantener conteo exacto
+/// de archivos, pero que no son decodificables actualmente por el backend DSP nativo.
+pub const UNSUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
+    "wma", "opus", "aifc", "caf", "mp4", "m4b", "oga", "mp2", "w64", "rf64", "mka", "wv", "ape",
+    "tta", "dsf", "dff",
+];
+
+/// Mantenido por compatibilidad regresiva con la API pública
+pub const SUPPORTED_EXTENSIONS: &[&str] = ANALYZABLE_EXTENSIONS;
+
+/// Retorna true si el archivo puede ser analizado exhaustivamente por el DSP
+pub fn is_analyzable(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|ext| ANALYZABLE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Retorna true si el archivo es un formato de audio reconocido pero no soportado por el decodificador
+pub fn is_unsupported_audio(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|ext| UNSUPPORTED_AUDIO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Retorna true si el archivo es un archivo de audio para propósitos de inventario y escaneo
 pub fn is_audio_file(path: &Path) -> bool {
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        let ext_lower = ext.to_lowercase();
-        SUPPORTED_EXTENSIONS.contains(&ext_lower.as_str())
-    } else {
-        false
-    }
+    is_analyzable(path) || is_unsupported_audio(path)
 }
 
 pub fn scan_collection<F, P>(
@@ -153,11 +176,65 @@ where
             let report = match cached_report {
                 Some(r) => r,
                 None => {
-                    let path_buf = path.to_path_buf();
-                    let analyze_res =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            analyze_single_file(&path_buf)
-                        }));
+                    if is_unsupported_audio(path) {
+                        let ext = path
+                            .extension()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("UNKNOWN")
+                            .to_lowercase();
+                        let ext_upper = ext.to_uppercase();
+                        let mut unsupported_rep = bdja_core::types::FileReport {
+                            file_id: 0,
+                            path: path_str.clone(),
+                            file_size,
+                            engine_rev: ENGINE_REV,
+                            facts: bdja_core::types::FormatFacts {
+                                container: ext_upper.clone(),
+                                codec: format!("No soportado ({})", ext),
+                                codec_type: bdja_core::types::Codec::Unknown,
+                                sample_rate: 0,
+                                bit_depth: None,
+                                channels: 0,
+                                duration_ms: 0,
+                                container_bitrate_kbps: None,
+                                is_lossless_declared: false,
+                            },
+                            verdict: bdja_core::types::Verdict::Inconclusive,
+                            confidence: 0.0,
+                            score_llr: 0.0,
+                            effective_bandwidth_hz: None,
+                            cutoff_slope_db_oct: None,
+                            evidences: Vec::new(),
+                            quality: bdja_core::types::QualityMetrics {
+                                true_peak_dbtp: None,
+                                lufs_integrated: None,
+                                clipped_samples: 0,
+                                dc_offset: None,
+                                dynamic_range_db: None,
+                                stereo_correlation: None,
+                            },
+                            guards_triggered: vec![format!(
+                                "Formato de audio no soportado actualmente por el motor ({})",
+                                ext
+                            )],
+                            verdict_summary: format!(
+                                "Formato de audio ({}) reconocido en la biblioteca pero no soportado por el decodificador",
+                                ext_upper
+                            ),
+                            average_spectrum_db: Vec::new(),
+                        };
+                        if let Some(ref st) = store {
+                            if let Ok(id) = st.save_report(&unsupported_rep) {
+                                unsupported_rep.file_id = id;
+                            }
+                        }
+                        unsupported_rep
+                    } else {
+                        let path_buf = path.to_path_buf();
+                        let analyze_res =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                analyze_single_file(&path_buf)
+                            }));
 
                     match analyze_res {
                         Ok(Ok(mut new_rep)) => {
@@ -268,11 +345,89 @@ where
                         }
                     }
                 }
-            };
+            }
+        };
 
             on_file_analyzed(report);
         });
     });
 
     Ok(analyzed_counter.load(Ordering::Relaxed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_audio_extension_classification() {
+        // Analizables
+        assert!(is_analyzable(Path::new("track.wav")));
+        assert!(is_analyzable(Path::new("track.FLAC")));
+        assert!(is_analyzable(Path::new("track.mp3")));
+        assert!(is_analyzable(Path::new("track.m4a")));
+        assert!(is_analyzable(Path::new("track.aac")));
+        assert!(is_analyzable(Path::new("track.ogg")));
+        assert!(is_analyzable(Path::new("track.aif")));
+        assert!(is_analyzable(Path::new("track.aiff")));
+        assert!(is_analyzable(Path::new("track.alac")));
+
+        assert!(!is_unsupported_audio(Path::new("track.wav")));
+        assert!(is_audio_file(Path::new("track.wav")));
+
+        // Reconocidos pero no soportados directamente por el backend DSP
+        assert!(is_unsupported_audio(Path::new("track.wma")));
+        assert!(is_unsupported_audio(Path::new("track.OPUS")));
+        assert!(is_unsupported_audio(Path::new("track.mka")));
+        assert!(is_unsupported_audio(Path::new("track.wv")));
+        assert!(is_unsupported_audio(Path::new("track.ape")));
+        assert!(is_unsupported_audio(Path::new("track.dsf")));
+
+        assert!(!is_analyzable(Path::new("track.wma")));
+        assert!(is_audio_file(Path::new("track.wma")));
+
+        // No son audio
+        assert!(!is_audio_file(Path::new("track.txt")));
+        assert!(!is_audio_file(Path::new("track.pdf")));
+        assert!(!is_audio_file(Path::new("track.cue")));
+        assert!(!is_audio_file(Path::new("track.jpg")));
+    }
+
+    #[test]
+    fn test_scan_unsupported_audio_generates_inconclusive_report_without_crash() {
+        let temp_dir = std::env::temp_dir().join(format!("bdja_test_scan_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let dummy_opus = temp_dir.join("test_track.opus");
+        let _ = std::fs::write(&dummy_opus, b"OggS_fake_opus_stream_data");
+
+        let reports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let reports_clone = Arc::clone(&reports);
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let count = scan_collection(
+            &[dummy_opus.clone()],
+            "silent",
+            true,
+            None,
+            cancel,
+            move |rep| {
+                reports_clone.lock().unwrap().push(rep);
+            },
+            |_, _, _| {},
+        );
+
+        let _ = std::fs::remove_file(&dummy_opus);
+        let _ = std::fs::remove_dir(&temp_dir);
+
+        assert_eq!(count.unwrap(), 1);
+        let locked = reports.lock().unwrap();
+        assert_eq!(locked.len(), 1);
+        let rep = &locked[0];
+        assert_eq!(rep.verdict, bdja_core::types::Verdict::Inconclusive);
+        assert_eq!(rep.facts.container, "OPUS");
+        assert!(rep.facts.codec.contains("No soportado"));
+        assert!(rep.guards_triggered.iter().any(|g| g.contains("opus")));
+    }
 }
