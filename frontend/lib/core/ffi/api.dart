@@ -7,12 +7,15 @@ import 'frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `map_report_to_ffi`
+// These functions are ignored because they are not marked as `pub`: `hash_to_visible_hwid`, `is_valid_hwid_format`, `map_report_to_ffi`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ScanJob`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Devuelve la revision del motor nativo.
 int engineRevision() => RustLib.instance.api.crateApiEngineRevision();
+
+Future<List<String>> deriveNativeHwidCandidates() =>
+    RustLib.instance.api.crateApiDeriveNativeHwidCandidates();
 
 /// Inicializa el motor con token de capacidad y directorio de trabajo.
 Future<EngineInfoFfi> engineInit({

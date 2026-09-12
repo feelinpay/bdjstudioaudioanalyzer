@@ -12,10 +12,7 @@ pub struct SpectrumAnalysis {
     pub average_spectrum_db: Vec<f32>,
 }
 
-pub fn analyze_spectrum(
-    power_spectra: &[Vec<f32>],
-    sample_rate: u32,
-) -> SpectrumAnalysis {
+pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> SpectrumAnalysis {
     if power_spectra.is_empty() {
         return SpectrumAnalysis {
             cutoff_kind: CutoffKind::FullSpectrum,
@@ -54,11 +51,11 @@ pub fn analyze_spectrum(
 
     // Smoothed spectrum (5-bin moving window to reduce bin-to-bin variance)
     let mut smoothed_db = vec![-120.0; n_bins];
-    for i in 0..n_bins {
+    for (i, val) in smoothed_db.iter_mut().enumerate().take(n_bins) {
         let start = i.saturating_sub(2);
         let end = (i + 3).min(n_bins);
         let sum: f64 = db_spectrum[start..end].iter().sum();
-        smoothed_db[i] = sum / (end - start) as f64;
+        *val = sum / (end - start) as f64;
     }
 
     // Acoustic presence reference level in the mid band (1 kHz to 6 kHz)
@@ -86,10 +83,10 @@ pub fn analyze_spectrum(
         let b_end = (b + win_bins).min(n_bins);
 
         if b_start < b && b < b_end {
-            let p_before: f64 = avg_power[b_start..b].iter().map(|&p| p as f64).sum::<f64>()
-                / (b - b_start) as f64;
-            let p_after: f64 = avg_power[b..b_end].iter().map(|&p| p as f64).sum::<f64>()
-                / (b_end - b) as f64;
+            let p_before: f64 =
+                avg_power[b_start..b].iter().map(|&p| p as f64).sum::<f64>() / (b - b_start) as f64;
+            let p_after: f64 =
+                avg_power[b..b_end].iter().map(|&p| p as f64).sum::<f64>() / (b_end - b) as f64;
 
             let db_before = 10.0 * (p_before + 1e-12).log10();
             let db_after = 10.0 * (p_after + 1e-12).log10();
@@ -100,7 +97,10 @@ pub fn analyze_spectrum(
             // 2. Caída abrupta >= 20 dB en sólo 1.200 Hz (equivalente a > 50 dB/octava)
             // 3. Supresión sostenida post-corte (no es un notch aislado)
             if db_before >= (ref_level - 70.0).max(-85.0) && drop >= 20.0 {
-                let p_post: f64 = avg_power[b_end..n_bins].iter().map(|&p| p as f64).sum::<f64>()
+                let p_post: f64 = avg_power[b_end..n_bins]
+                    .iter()
+                    .map(|&p| p as f64)
+                    .sum::<f64>()
                     / (n_bins - b_end).max(1) as f64;
                 let db_post = 10.0 * (p_post + 1e-12).log10();
 
@@ -119,22 +119,46 @@ pub fn analyze_spectrum(
         }
     }
 
-    let (cutoff_kind, cutoff_frequency_hz, content_bandwidth_hz, cutoff_bin, effective_bandwidth_hz, cutoff_slope_db_oct) = if let Some((b_exact, _, slope)) = detected_cliff {
+    let (
+        cutoff_kind,
+        cutoff_frequency_hz,
+        content_bandwidth_hz,
+        cutoff_bin,
+        effective_bandwidth_hz,
+        cutoff_slope_db_oct,
+    ) = if let Some((b_exact, _, slope)) = detected_cliff {
         // Se detectó corte brickwall artificial (MP3 / AAC / etc.)
         let f_measured = b_exact as f64 * bin_hz;
         let hz = f_measured.round() as u32;
-        (CutoffKind::BrickwallCutoff, Some(hz), hz, b_exact, hz, slope)
+        (
+            CutoffKind::BrickwallCutoff,
+            Some(hz),
+            hz,
+            b_exact,
+            hz,
+            slope,
+        )
     } else {
         // No existe corte brickwall artificial.
         // Verificar presencia de energía en el extremo superior (88% Nyquist a Nyquist)
         let top_band_start = ((nyquist * 0.88) / bin_hz) as usize;
-        let top_band_p: f64 = avg_power[top_band_start..n_bins].iter().map(|&p| p as f64).sum::<f64>()
+        let top_band_p: f64 = avg_power[top_band_start..n_bins]
+            .iter()
+            .map(|&p| p as f64)
+            .sum::<f64>()
             / (n_bins - top_band_start).max(1) as f64;
         let top_band_db = 10.0 * (top_band_p + 1e-12).log10();
 
         if top_band_db >= (ref_level - 50.0).max(-82.0) {
             // Espectro pleno hasta Nyquist sin restricción artificial
-            (CutoffKind::FullSpectrum, None, nyquist as u32, n_bins.saturating_sub(1), nyquist as u32, 0.0)
+            (
+                CutoffKind::FullSpectrum,
+                None,
+                nyquist as u32,
+                n_bins.saturating_sub(1),
+                nyquist as u32,
+                0.0,
+            )
         } else {
             // Decaimiento acústico natural sin filtro brickwall (ej. máster vintage o mezcla oscura)
             let presence_threshold = (ref_level - 45.0).max(-78.0);
@@ -154,7 +178,14 @@ pub fn analyze_spectrum(
 
             let measured_hz = natural_cutoff_bin as f64 * bin_hz;
             if measured_hz >= nyquist * 0.92 {
-                (CutoffKind::FullSpectrum, None, nyquist as u32, n_bins.saturating_sub(1), nyquist as u32, 0.0)
+                (
+                    CutoffKind::FullSpectrum,
+                    None,
+                    nyquist as u32,
+                    n_bins.saturating_sub(1),
+                    nyquist as u32,
+                    0.0,
+                )
             } else {
                 let f_center = measured_hz;
                 let delta_f = (f_center * 0.1).max(400.0);
@@ -167,7 +198,14 @@ pub fn analyze_spectrum(
                 let octaves = (f2 / f1).log2().max(0.1);
                 let slope = delta_db / octaves;
 
-                (CutoffKind::NaturalRolloff, None, measured_hz.round() as u32, natural_cutoff_bin, measured_hz.round() as u32, slope)
+                (
+                    CutoffKind::NaturalRolloff,
+                    None,
+                    measured_hz.round() as u32,
+                    natural_cutoff_bin,
+                    measured_hz.round() as u32,
+                    slope,
+                )
             }
         }
     };
@@ -179,9 +217,15 @@ pub fn analyze_spectrum(
 
     let mut shelf_16k_drop_db = 0.0;
     if bin_14k < bin_16k && bin_16k < bin_18k {
-        let p_14_16: f64 = avg_power[bin_14k..bin_16k].iter().map(|&p| p as f64).sum::<f64>()
+        let p_14_16: f64 = avg_power[bin_14k..bin_16k]
+            .iter()
+            .map(|&p| p as f64)
+            .sum::<f64>()
             / (bin_16k - bin_14k) as f64;
-        let p_16_18: f64 = avg_power[bin_16k..bin_18k].iter().map(|&p| p as f64).sum::<f64>()
+        let p_16_18: f64 = avg_power[bin_16k..bin_18k]
+            .iter()
+            .map(|&p| p as f64)
+            .sum::<f64>()
             / (bin_18k - bin_16k) as f64;
 
         if p_14_16 > 1e-12 {
@@ -208,8 +252,9 @@ pub fn analyze_spectrum(
                 let start = bin_10k + sb * subband_size;
                 let end = (start + subband_size).min(cutoff_bin);
                 if start < end {
-                    let sb_energy: f64 = avg_power[start..end].iter().map(|&p| p as f64).sum::<f64>()
-                        / (end - start) as f64;
+                    let sb_energy: f64 =
+                        avg_power[start..end].iter().map(|&p| p as f64).sum::<f64>()
+                            / (end - start) as f64;
                     // Subband energy 55 dB below the active band peak indicates empty psychoacoustic hole
                     if (sb_energy / band_peak) < 3.16e-6 {
                         empty_subbands += 1;

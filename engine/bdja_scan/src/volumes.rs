@@ -1,4 +1,4 @@
-﻿use bdja_core::types::VolumeInfo;
+use bdja_core::types::VolumeInfo;
 
 #[cfg(windows)]
 pub fn list_system_volumes() -> Vec<VolumeInfo> {
@@ -6,7 +6,7 @@ pub fn list_system_volumes() -> Vec<VolumeInfo> {
     use std::os::windows::ffi::OsStringExt;
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
-        GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW, GetDiskFreeSpaceExW,
+        GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
     };
 
     const DRIVE_REMOVABLE: u32 = 2;
@@ -29,7 +29,9 @@ pub fn list_system_volumes() -> Vec<VolumeInfo> {
         if buffer[i] == 0 {
             if i > start {
                 let drive_slice = &buffer[start..i];
-                let drive_path = OsString::from_wide(drive_slice).to_string_lossy().to_string();
+                let drive_path = OsString::from_wide(drive_slice)
+                    .to_string_lossy()
+                    .to_string();
 
                 let mut wide_drive: Vec<u16> = drive_slice.to_vec();
                 wide_drive.push(0);
@@ -65,16 +67,30 @@ pub fn list_system_volumes() -> Vec<VolumeInfo> {
                 .is_ok();
 
                 let (label, fs_type, is_ready) = if success {
-                    let name_len = vol_name.iter().position(|&c| c == 0).unwrap_or(vol_name.len());
-                    let fs_len = fs_name.iter().position(|&c| c == 0).unwrap_or(fs_name.len());
+                    let name_len = vol_name
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(vol_name.len());
+                    let fs_len = fs_name
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(fs_name.len());
 
-                    let l = OsString::from_wide(&vol_name[..name_len]).to_string_lossy().to_string();
-                    let f = OsString::from_wide(&fs_name[..fs_len]).to_string_lossy().to_string();
+                    let l = OsString::from_wide(&vol_name[..name_len])
+                        .to_string_lossy()
+                        .to_string();
+                    let f = OsString::from_wide(&fs_name[..fs_len])
+                        .to_string_lossy()
+                        .to_string();
                     (l, f, true)
                 } else {
                     (
                         String::new(),
-                        if is_remote { "Red".to_string() } else { "Desconocido".to_string() },
+                        if is_remote {
+                            "Red".to_string()
+                        } else {
+                            "Desconocido".to_string()
+                        },
                         false,
                     )
                 };
@@ -96,7 +112,11 @@ pub fn list_system_volumes() -> Vec<VolumeInfo> {
                     id: vol_id,
                     path: drive_path,
                     label: if label.is_empty() {
-                        if is_removable { "Unidad USB".to_string() } else { "Disco Local".to_string() }
+                        if is_removable {
+                            "Unidad USB".to_string()
+                        } else {
+                            "Disco Local".to_string()
+                        }
                     } else {
                         label
                     },

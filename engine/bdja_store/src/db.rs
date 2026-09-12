@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::path::Path;
+use bdja_core::types::{Evidence, FileReport, FormatFacts, QualityMetrics, Verdict};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
-use bdja_core::types::{Evidence, FileReport, FormatFacts, QualityMetrics, Verdict};
+use std::collections::HashMap;
+use std::path::Path;
 
 pub struct ReportStore {
     conn: Mutex<Connection>,
@@ -70,7 +70,8 @@ fn parse_report_row(row: &rusqlite::Row) -> Result<FileReport, rusqlite::Error> 
 
     let guards_triggered: Vec<String> = serde_json::from_str(&guards_json).unwrap_or_default();
     let evidences: Vec<Evidence> = serde_json::from_str(&evidences_json).unwrap_or_default();
-    let average_spectrum_db: Vec<f32> = serde_json::from_str(&spectrum_json).unwrap_or_else(|_| vec![-120.0; 256]);
+    let average_spectrum_db: Vec<f32> =
+        serde_json::from_str(&spectrum_json).unwrap_or_else(|_| vec![-120.0; 256]);
 
     let codec_type = match codec_type_str.as_str() {
         "PcmS16Le" => bdja_core::types::Codec::PcmS16Le,
@@ -145,7 +146,7 @@ impl ReportStore {
 
     fn init_schema(&self) -> Result<(), rusqlite::Error> {
         let conn = self.conn.lock();
-        
+
         let version: i32 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap_or(0);
@@ -206,11 +207,26 @@ impl ReportStore {
 
         if version < 2 {
             // Migraciones seguras para bases preexistentes
-            let _ = conn.execute("ALTER TABLE file_report ADD COLUMN codec_type TEXT NOT NULL DEFAULT 'Unknown'", []);
-            let _ = conn.execute("ALTER TABLE file_report ADD COLUMN spectrum_json TEXT NOT NULL DEFAULT '[]'", []);
-            let _ = conn.execute("ALTER TABLE file_report ADD COLUMN mtime_utc INTEGER NOT NULL DEFAULT 0", []);
-            let _ = conn.execute("ALTER TABLE file_report ADD COLUMN blake3_hash TEXT NOT NULL DEFAULT ''", []);
-            let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_blake3 ON file_report(blake3_hash)", []);
+            let _ = conn.execute(
+                "ALTER TABLE file_report ADD COLUMN codec_type TEXT NOT NULL DEFAULT 'Unknown'",
+                [],
+            );
+            let _ = conn.execute(
+                "ALTER TABLE file_report ADD COLUMN spectrum_json TEXT NOT NULL DEFAULT '[]'",
+                [],
+            );
+            let _ = conn.execute(
+                "ALTER TABLE file_report ADD COLUMN mtime_utc INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            let _ = conn.execute(
+                "ALTER TABLE file_report ADD COLUMN blake3_hash TEXT NOT NULL DEFAULT ''",
+                [],
+            );
+            let _ = conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_blake3 ON file_report(blake3_hash)",
+                [],
+            );
             let _ = conn.execute(
                 "CREATE TABLE IF NOT EXISTS scan_job (
                     job_id INTEGER PRIMARY KEY,
@@ -325,7 +341,10 @@ impl ReportStore {
         if let Some(s) = search {
             if !s.is_empty() {
                 query.push_str(" AND path LIKE ? ESCAPE '\\'");
-                let escaped = s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+                let escaped = s
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_");
                 params.push(Box::new(format!("%{}%", escaped)));
             }
         }
@@ -345,7 +364,11 @@ impl ReportStore {
         Ok(list)
     }
 
-    pub fn count_reports(&self, verdict_filter: Option<&str>, search: Option<&str>) -> Result<u64, rusqlite::Error> {
+    pub fn count_reports(
+        &self,
+        verdict_filter: Option<&str>,
+        search: Option<&str>,
+    ) -> Result<u64, rusqlite::Error> {
         let conn = self.conn.lock();
         let mut query = "SELECT COUNT(*) FROM file_report WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -359,7 +382,10 @@ impl ReportStore {
         if let Some(s) = search {
             if !s.is_empty() {
                 query.push_str(" AND path LIKE ? ESCAPE '\\'");
-                let escaped = s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+                let escaped = s
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_");
                 params.push(Box::new(format!("%{}%", escaped)));
             }
         }
@@ -370,7 +396,8 @@ impl ReportStore {
 
     pub fn count_by_verdict(&self) -> Result<HashMap<String, u64>, rusqlite::Error> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT verdict, COUNT(*) FROM file_report GROUP BY verdict")?;
+        let mut stmt =
+            conn.prepare("SELECT verdict, COUNT(*) FROM file_report GROUP BY verdict")?;
         let rows = stmt.query_map([], |row| {
             let v: String = row.get(0)?;
             let count: u64 = row.get(1)?;
@@ -386,7 +413,10 @@ impl ReportStore {
 
     pub fn get_report_by_path(&self, path: &str) -> Result<Option<FileReport>, rusqlite::Error> {
         let conn = self.conn.lock();
-        let query = format!("SELECT {} FROM file_report WHERE path = ?1 LIMIT 1", SELECT_FIELDS);
+        let query = format!(
+            "SELECT {} FROM file_report WHERE path = ?1 LIMIT 1",
+            SELECT_FIELDS
+        );
         let mut stmt = conn.prepare(&query)?;
         let mut rows = stmt.query_map(params![path], parse_report_row)?;
 
@@ -411,7 +441,10 @@ impl ReportStore {
         );
 
         let mut stmt = conn.prepare(&query)?;
-        let mut rows = stmt.query_map(params![path, file_size, mtime_utc, engine_rev], parse_report_row)?;
+        let mut rows = stmt.query_map(
+            params![path, file_size, mtime_utc, engine_rev],
+            parse_report_row,
+        )?;
 
         if let Some(res) = rows.next() {
             Ok(Some(res?))
@@ -420,12 +453,19 @@ impl ReportStore {
         }
     }
 
-    pub fn get_cached_by_hash(&self, blake3_hash: &str, engine_rev: u32) -> Result<Option<FileReport>, rusqlite::Error> {
+    pub fn get_cached_by_hash(
+        &self,
+        blake3_hash: &str,
+        engine_rev: u32,
+    ) -> Result<Option<FileReport>, rusqlite::Error> {
         if blake3_hash.is_empty() {
             return Ok(None);
         }
         let conn = self.conn.lock();
-        let query = format!("SELECT {} FROM file_report WHERE blake3_hash = ?1 AND engine_rev = ?2 LIMIT 1", SELECT_FIELDS);
+        let query = format!(
+            "SELECT {} FROM file_report WHERE blake3_hash = ?1 AND engine_rev = ?2 LIMIT 1",
+            SELECT_FIELDS
+        );
         let mut stmt = conn.prepare(&query)?;
         let mut rows = stmt.query_map(params![blake3_hash, engine_rev], parse_report_row)?;
 
@@ -436,7 +476,10 @@ impl ReportStore {
         }
     }
 
-    pub fn find_duplicates(&self, limit_groups: usize) -> Result<Vec<DuplicateGroup>, rusqlite::Error> {
+    pub fn find_duplicates(
+        &self,
+        limit_groups: usize,
+    ) -> Result<Vec<DuplicateGroup>, rusqlite::Error> {
         let conn = self.conn.lock();
         let dup_query = "SELECT blake3_hash, COUNT(*) as cnt, MIN(file_size) as fsize FROM file_report WHERE blake3_hash != '' GROUP BY blake3_hash HAVING cnt > 1 ORDER BY cnt DESC LIMIT ?1";
         let mut stmt = conn.prepare(dup_query)?;
@@ -451,7 +494,10 @@ impl ReportStore {
             .collect();
 
         let mut groups = Vec::new();
-        let select_query = format!("SELECT {} FROM file_report WHERE blake3_hash = ?1 ORDER BY id ASC", SELECT_FIELDS);
+        let select_query = format!(
+            "SELECT {} FROM file_report WHERE blake3_hash = ?1 ORDER BY id ASC",
+            SELECT_FIELDS
+        );
         let mut select_stmt = conn.prepare(&select_query)?;
 
         for (hash, count, file_size) in dup_hashes {

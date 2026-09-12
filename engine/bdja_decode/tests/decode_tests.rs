@@ -1,8 +1,8 @@
-﻿use symphonia::core::codecs::*;
 use bdja_core::types::Codec;
 use bdja_decode::decoder::map_symphonia_codec;
 use bdja_decode::forensic::analyze_forensic_headers;
 use std::io::Write;
+use symphonia::core::codecs::*;
 
 #[test]
 fn test_symphonia_codec_mapping() {

@@ -1,11 +1,11 @@
+use bdja_core::types::FileReport;
+pub use bdja_core::types::ENGINE_REV;
+use bdja_store::ReportStore;
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
-use parking_lot::{Mutex, RwLock};
-use bdja_core::types::FileReport;
-pub use bdja_core::types::ENGINE_REV;
-use bdja_store::ReportStore;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DuplicateGroupFfi {
@@ -170,6 +170,164 @@ pub fn engine_revision() -> u32 {
     ENGINE_REV
 }
 
+fn hash_to_visible_hwid(canonical: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    let res = hasher.finalize();
+    let hex_upper: String = res.iter().map(|b| format!("{:02X}", b)).collect();
+    if hex_upper.len() >= 16 {
+        let s = &hex_upper[..16];
+        format!("{}-{}-{}-{}", &s[0..4], &s[4..8], &s[8..12], &s[12..16])
+    } else {
+        hex_upper
+    }
+}
+
+pub fn derive_native_hwid_candidates() -> Vec<String> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        // 1. Candidato WMI (SMBIOS UUID + CPU + Baseboard)
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$p = Get-CimInstance Win32_ComputerSystemProduct; $c = Get-CimInstance Win32_Processor; $b = Get-CimInstance Win32_BaseBoard; \"$($p.UUID)`n$($c.ProcessorId)`n$($b.SerialNumber)\"",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let lines: Vec<&str> = stdout.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+                if !lines.is_empty() {
+                    let uuid = lines[0].to_lowercase();
+                    let cpu = if lines.len() > 1 { lines[1].to_lowercase() } else { String::new() };
+                    let board = if lines.len() > 2 { lines[2].to_lowercase() } else { String::new() };
+
+                    if !uuid.is_empty() && uuid != "null" {
+                        let mut pairs = Vec::new();
+                        if !board.is_empty() && board != "null" {
+                            pairs.push(format!("baseboardserial={}", board));
+                        }
+                        if !cpu.is_empty() && cpu != "null" {
+                            pairs.push(format!("cpuid={}", cpu));
+                        }
+                        pairs.push(format!("smbiosuuid={}", uuid));
+                        pairs.sort();
+                        let canonical = format!("BDJ-HWID-V2|platform=windows|{}", pairs.join("|"));
+                        candidates.push(hash_to_visible_hwid(&canonical));
+                    }
+                }
+            }
+        }
+
+        // 2. Candidato Registro MachineGuid
+        if let Ok(output) = std::process::Command::new("reg")
+            .args([
+                "query",
+                r"HKLM\SOFTWARE\Microsoft\Cryptography",
+                "/v",
+                "MachineGuid",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if line.contains("MachineGuid") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 3 {
+                            let guid = parts[2].trim().to_lowercase();
+                            if !guid.is_empty() && guid != "null" {
+                                let canonical =
+                                    format!("BDJ-HWID-V2|platform=windows|deviceid={}", guid);
+                                candidates.push(hash_to_visible_hwid(&canonical));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(uuid) = std::fs::read_to_string("/sys/class/dmi/id/product_uuid") {
+            let u = uuid.trim().to_lowercase();
+            if !u.is_empty() {
+                let canonical = format!("BDJ-HWID-V2|platform=linux|productuuid={}", u);
+                candidates.push(hash_to_visible_hwid(&canonical));
+            }
+        }
+        if let Ok(mid) = std::fs::read_to_string("/etc/machine-id") {
+            let m = mid.trim().to_lowercase();
+            if !m.is_empty() {
+                let canonical = format!("BDJ-HWID-V2|platform=linux|machineid={}", m);
+                candidates.push(hash_to_visible_hwid(&canonical));
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("ioreg")
+            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("IOPlatformUUID") {
+                    if let Some(val) = line.split('=').nth(1) {
+                        let clean = val.trim().trim_matches('"').to_lowercase();
+                        if !clean.is_empty() {
+                            let canonical =
+                                format!("BDJ-HWID-V2|platform=macos|systemguid={}", clean);
+                            candidates.push(hash_to_visible_hwid(&canonical));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    candidates
+}
+
+fn is_valid_hwid_format(hwid: &str) -> bool {
+    let clean = hwid.trim().to_lowercase();
+    if clean.len() < 8 {
+        return false;
+    }
+    let placeholders = [
+        "00000000-0000-0000-0000-000000000000",
+        "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        "0000-0000-0000-0000",
+        "unknown_platform",
+        "unknown",
+        "generic",
+        "example",
+        "test",
+        "null",
+    ];
+    if placeholders.iter().any(|&p| clean == *p) {
+        return false;
+    }
+    let alnum: Vec<char> = clean
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if alnum.len() < 4 {
+        return false;
+    }
+    let mut unique = alnum.clone();
+    unique.sort();
+    unique.dedup();
+    unique.len() >= 3
+}
+
 /// Inicializa el motor con token de capacidad y directorio de trabajo.
 pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineInfoFfi, String> {
     let token_clean = capability_token.trim();
@@ -185,6 +343,24 @@ pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineI
     let hwid = parts[0];
     let token_digest = parts[1];
 
+    if !is_valid_hwid_format(hwid) {
+        return Err("HWID de dispositivo inválido o con entropía insuficiente".to_string());
+    }
+
+    // Verificación nativa de coincidencia con hardware físico
+    if std::env::var("BDJA_SKIP_HWID_CHECK").is_err() && !cfg!(test) {
+        let candidates = derive_native_hwid_candidates();
+        if !candidates.is_empty() {
+            let matched = candidates.iter().any(|c| c.eq_ignore_ascii_case(hwid));
+            if !matched {
+                return Err(
+                    "El HWID del token no corresponde al hardware físico de este equipo"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
@@ -192,11 +368,13 @@ pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineI
     let key = b"BDJ_AUDIO_ANALYZER_CAPABILITY_SALT_2026";
     let message = format!("BDJA_CAPABILITY:{}:{}", hwid, ENGINE_REV);
 
-    let mut mac = HmacSha256::new_from_slice(key)
-        .map_err(|e| format!("Error HMAC: {}", e))?;
+    let mut mac = HmacSha256::new_from_slice(key).map_err(|e| format!("Error HMAC: {}", e))?;
     mac.update(message.as_bytes());
     let expected_bytes = mac.finalize().into_bytes();
-    let expected_hex = expected_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+    let expected_hex = expected_bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
 
     // Comparación en tiempo constante (sin cortocircuito) para prevenir timing attacks
     let digest_clean = token_digest.trim().to_lowercase();
@@ -234,22 +412,27 @@ pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineI
 /// Enumera las unidades del sistema (USB, SSD, HDD).
 pub fn list_system_volumes() -> Result<Vec<VolumeInfoFfi>, String> {
     let vols = bdja_scan::list_system_volumes();
-    Ok(vols.into_iter().map(|v| VolumeInfoFfi {
-        id: v.id,
-        path: v.path,
-        label: v.label,
-        fs_type: v.fs_type,
-        is_removable: v.is_removable,
-        is_ready: v.is_ready,
-        total_bytes: v.total_bytes,
-        free_bytes: v.free_bytes,
-    }).collect())
+    Ok(vols
+        .into_iter()
+        .map(|v| VolumeInfoFfi {
+            id: v.id,
+            path: v.path,
+            label: v.label,
+            fs_type: v.fs_type,
+            is_removable: v.is_removable,
+            is_ready: v.is_ready,
+            total_bytes: v.total_bytes,
+            free_bytes: v.free_bytes,
+        })
+        .collect())
 }
 
 /// Analiza un unico archivo de audio usando el motor DSP y de veredicto completo.
 pub fn analyze_file(path: String) -> Result<FileReportFfi, String> {
     if !*INITIALIZED.read() {
-        return Err("El motor no ha sido inicializado con un token de capacidad valido".to_string());
+        return Err(
+            "El motor no ha sido inicializado con un token de capacidad valido".to_string(),
+        );
     }
 
     let p = Path::new(&path);
@@ -344,8 +527,8 @@ pub fn start_scan_job(
             move |report| {
                 let report_ffi = map_report_to_ffi(report);
                 let mut lock = pending_clone.lock();
-                // N-6: Acotar cola en memoria a 1.000 reportes (los datos completos ya están en SQLite)
-                if lock.len() < 1000 {
+                // N-6: Acotar cola en memoria a un maximo estricto de 250 reportes (los datos completos ya estan en SQLite)
+                if lock.len() < 250 {
                     lock.push(report_ffi);
                 }
             },
@@ -367,7 +550,9 @@ pub fn poll_scan_job(job_id: i64) -> Result<ScanJobStatusFfi, String> {
     let (is_completed, is_active, total_found, analyzed_count, current_path, new_reports) = {
         let jobs_lock = ACTIVE_JOBS.read();
         let map = jobs_lock.as_ref().ok_or("No hay trabajos activos")?;
-        let job = map.get(&job_id).ok_or_else(|| format!("Trabajo {} no encontrado", job_id))?;
+        let job = map
+            .get(&job_id)
+            .ok_or_else(|| format!("Trabajo {} no encontrado", job_id))?;
 
         let is_completed = job.is_completed.load(Ordering::SeqCst);
         let is_active = !is_completed;
@@ -378,7 +563,14 @@ pub fn poll_scan_job(job_id: i64) -> Result<ScanJobStatusFfi, String> {
             let mut lock = job.pending_reports.lock();
             std::mem::take(&mut *lock)
         };
-        (is_completed, is_active, total_found, analyzed_count, current_path, new_reports)
+        (
+            is_completed,
+            is_active,
+            total_found,
+            analyzed_count,
+            current_path,
+            new_reports,
+        )
     };
 
     if is_completed {
@@ -427,7 +619,10 @@ pub fn cancel_all_scans() -> bool {
 }
 
 /// Escanea una carpeta o unidad y analiza hasta `max_files` archivos de audio encontrados (0 para ilimitado).
-pub fn scan_directory_audio(root_path: String, max_files: u32) -> Result<Vec<FileReportFfi>, String> {
+pub fn scan_directory_audio(
+    root_path: String,
+    max_files: u32,
+) -> Result<Vec<FileReportFfi>, String> {
     if !*INITIALIZED.read() {
         return Err("El motor no ha sido inicializado".to_string());
     }
@@ -486,10 +681,7 @@ pub fn query_saved_reports(
         )
         .map_err(|e| e.to_string())?;
 
-    Ok(reports
-        .into_iter()
-        .map(map_report_to_ffi)
-        .collect())
+    Ok(reports.into_iter().map(map_report_to_ffi).collect())
 }
 
 /// Cuenta el total de reportes que coinciden con los filtros.

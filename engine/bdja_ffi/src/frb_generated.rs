@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2084738051;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1495887897;
 
 // Section: executor
 
@@ -240,6 +240,38 @@ fn wire__crate__api__count_saved_reports_impl(
                 transform_result_sse::<_, String>((move || {
                     let output_ok =
                         crate::api::count_saved_reports(api_verdict_filter, api_search)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__derive_native_hwid_candidates_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "derive_native_hwid_candidates",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::derive_native_hwid_candidates())?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -1016,16 +1048,19 @@ fn pde_ffi_dispatcher_primary_impl(
         4 => wire__crate__api__cancel_all_scans_impl(port, ptr, rust_vec_len, data_len),
         5 => wire__crate__api__cancel_scan_job_impl(port, ptr, rust_vec_len, data_len),
         6 => wire__crate__api__count_saved_reports_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__diagnostics_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__engine_init_impl(port, ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__export_reports_csv_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__export_reports_json_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__list_system_volumes_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__poll_scan_job_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__query_duplicate_groups_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__query_saved_reports_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__scan_directory_audio_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__start_scan_job_impl(port, ptr, rust_vec_len, data_len),
+        7 => {
+            wire__crate__api__derive_native_hwid_candidates_impl(port, ptr, rust_vec_len, data_len)
+        }
+        8 => wire__crate__api__diagnostics_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__engine_init_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__export_reports_csv_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__export_reports_json_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__list_system_volumes_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__poll_scan_job_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__query_duplicate_groups_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__query_saved_reports_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__scan_directory_audio_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__start_scan_job_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1038,7 +1073,7 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        9 => wire__crate__api__engine_revision_impl(ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__engine_revision_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

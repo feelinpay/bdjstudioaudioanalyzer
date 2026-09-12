@@ -41,12 +41,17 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
     }
 
     // Check magic bytes
-    let is_riff_wav = header_buf.starts_with(b"RIFF") && header_buf.len() >= 12 && &header_buf[8..12] == b"WAVE";
+    let is_riff_wav =
+        header_buf.starts_with(b"RIFF") && header_buf.len() >= 12 && &header_buf[8..12] == b"WAVE";
     let is_flac = header_buf.starts_with(b"fLaC");
-    let is_aiff = header_buf.starts_with(b"FORM") && header_buf.len() >= 12 && (&header_buf[8..12] == b"AIFF" || &header_buf[8..12] == b"AIFC");
+    let is_aiff = header_buf.starts_with(b"FORM")
+        && header_buf.len() >= 12
+        && (&header_buf[8..12] == b"AIFF" || &header_buf[8..12] == b"AIFC");
     let is_mp3_id3 = header_buf.starts_with(b"ID3");
-    let is_mp3_sync = header_buf.len() >= 2 && header_buf[0] == 0xFF && (header_buf[1] & 0xE0) == 0xE0;
-    let is_mp4 = header_buf.len() >= 8 && (&header_buf[4..8] == b"ftyp" || &header_buf[4..8] == b"moov");
+    let is_mp3_sync =
+        header_buf.len() >= 2 && header_buf[0] == 0xFF && (header_buf[1] & 0xE0) == 0xE0;
+    let is_mp4 =
+        header_buf.len() >= 8 && (&header_buf[4..8] == b"ftyp" || &header_buf[4..8] == b"moov");
     let is_ogg = header_buf.starts_with(b"OggS");
 
     evidence.detected_magic_type = if is_riff_wav {
@@ -66,7 +71,10 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
     };
 
     // Extension mismatch check: Declared lossless container, but actual binary is lossy bitstream
-    if ((ext == "wav" && !is_riff_wav) || (ext == "flac" && !is_flac) || (ext == "aif" && !is_aiff) || (ext == "aiff" && !is_aiff))
+    if ((ext == "wav" && !is_riff_wav)
+        || (ext == "flac" && !is_flac)
+        || (ext == "aif" && !is_aiff)
+        || (ext == "aiff" && !is_aiff))
         && (is_mp3_id3 || is_mp3_sync || is_mp4 || is_ogg)
     {
         evidence.is_extension_mismatch = true;
@@ -78,17 +86,26 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
 
     // DJ metadata check: Standard ID3 chunks in WAV (Rekordbox / Serato / Traktor tags)
     // This is legitimate DJ software metadata, NOT transcode evidence!
-    if is_riff_wav && (find_subsequence(&header_buf, b"id3 ") || find_subsequence(&header_buf, b"ID3 ")) {
+    if is_riff_wav
+        && (find_subsequence(&header_buf, b"id3 ") || find_subsequence(&header_buf, b"ID3 "))
+    {
         evidence.has_dj_metadata = true;
-        evidence.descriptions.push("Chunk ID3 de metadatos detectado (legítimo de software DJ: Rekordbox/Serato)".to_string());
+        evidence.descriptions.push(
+            "Chunk ID3 de metadatos detectado (legítimo de software DJ: Rekordbox/Serato)"
+                .to_string(),
+        );
     }
 
     // Scan for Xing / Info / LAME headers in header_buf
-    if let Some(pos) = find_subsequence_pos(&header_buf, b"Xing").or_else(|| find_subsequence_pos(&header_buf, b"Info")) {
+    if let Some(pos) = find_subsequence_pos(&header_buf, b"Xing")
+        .or_else(|| find_subsequence_pos(&header_buf, b"Info"))
+    {
         // Confirm it is not inside an ID3 text tag but in an audio frame header
         evidence.has_xing_lame_header = true;
         evidence.has_lossy_encoder_signature = true;
-        evidence.descriptions.push("Cabecera Xing/Info residual de trama MP3 detectada".to_string());
+        evidence
+            .descriptions
+            .push("Cabecera Xing/Info residual de trama MP3 detectada".to_string());
         // Look for LAME version tag usually 120-160 bytes after Xing
         if header_buf.len() > pos + 128 {
             let slice = &header_buf[pos..pos + 160];
@@ -96,7 +113,9 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
                 let end = std::cmp::min(lame_pos + 9, slice.len());
                 if let Ok(s) = std::str::from_utf8(&slice[lame_pos..end]) {
                     evidence.encoder_string = Some(s.to_string());
-                    evidence.descriptions.push(format!("Firma de encoder MP3 residual: {}", s));
+                    evidence
+                        .descriptions
+                        .push(format!("Firma de encoder MP3 residual: {}", s));
                 }
             }
         }
@@ -106,7 +125,9 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
         let end = std::cmp::min(pos + 9, header_buf.len());
         if let Ok(s) = std::str::from_utf8(&header_buf[pos..end]) {
             evidence.encoder_string = Some(s.to_string());
-            evidence.descriptions.push(format!("Firma LAME3 residual encontrada: {}", s));
+            evidence
+                .descriptions
+                .push(format!("Firma LAME3 residual encontrada: {}", s));
         }
     } else if let Some(pos) = find_subsequence_pos(&header_buf, b"Lavf") {
         // Lavf is FFmpeg (libavformat). It is standard for DAW exports, conversion scripts and mastering.
@@ -121,7 +142,9 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
             let s_clean = s.trim().to_string();
             evidence.encoder_string = Some(s_clean.clone());
             // Informational only, never accusatory
-            evidence.descriptions.push(format!("Software de exportación: {}", s_clean));
+            evidence
+                .descriptions
+                .push(format!("Software de exportación: {}", s_clean));
         }
     }
 
@@ -132,16 +155,18 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
             if let Some(pos) = find_subsequence_pos(&tail_buf, b"LAME3.") {
                 evidence.has_xing_lame_header = true;
                 evidence.has_lossy_encoder_signature = true;
-                    let end = std::cmp::min(pos + 9, tail_buf.len());
-                    if let Ok(s) = std::str::from_utf8(&tail_buf[pos..end]) {
-                        if evidence.encoder_string.is_none() {
-                            evidence.encoder_string = Some(s.to_string());
-                            evidence.descriptions.push(format!("Firma LAME residual al final del archivo: {}", s));
-                        }
+                let end = std::cmp::min(pos + 9, tail_buf.len());
+                if let Ok(s) = std::str::from_utf8(&tail_buf[pos..end]) {
+                    if evidence.encoder_string.is_none() {
+                        evidence.encoder_string = Some(s.to_string());
+                        evidence
+                            .descriptions
+                            .push(format!("Firma LAME residual al final del archivo: {}", s));
                     }
                 }
             }
         }
+    }
 
     evidence
 }
@@ -151,5 +176,7 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 fn find_subsequence_pos(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }

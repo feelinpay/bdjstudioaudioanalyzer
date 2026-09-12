@@ -3,11 +3,10 @@ use std::path::Path;
 
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{
-    DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3,
+    CodecType, DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3,
     CODEC_TYPE_NULL, CODEC_TYPE_OPUS, CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F32LE,
     CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S24LE,
     CODEC_TYPE_PCM_S32BE, CODEC_TYPE_PCM_S32LE, CODEC_TYPE_PCM_U8, CODEC_TYPE_VORBIS,
-    CodecType,
 };
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
@@ -15,9 +14,9 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-use bdja_core::types::{Codec, FormatFacts};
 use crate::error::{DecodeError, Result};
 use crate::forensic::{analyze_forensic_headers, ForensicEvidence};
+use bdja_core::types::{Codec, FormatFacts};
 
 pub const WINDOW_SIZE_FINE: usize = 8192;
 pub const WINDOW_SIZE_FAST: usize = 1024;
@@ -183,7 +182,16 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
             let frac = 0.05 + 0.90 * (seg as f64 / (TARGET_SEGMENTS - 1).max(1) as f64);
             let target_frame = (frac * n_frames as f64) as u64;
 
-            if format.seek(SeekMode::Coarse, SeekTo::TimeStamp { ts: target_frame, track_id }).is_ok() {
+            if format
+                .seek(
+                    SeekMode::Coarse,
+                    SeekTo::TimeStamp {
+                        ts: target_frame,
+                        track_id,
+                    },
+                )
+                .is_ok()
+            {
                 decoder.reset();
                 seek_successful = true;
 
@@ -204,7 +212,8 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
                     if let Ok(audio_buf) = decoder.decode(&packet) {
                         let spec = *audio_buf.spec();
                         let capacity = audio_buf.capacity();
-                        let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(capacity as u64, spec));
+                        let sbuf = sample_buf
+                            .get_or_insert_with(|| SampleBuffer::new(capacity as u64, spec));
                         sbuf.copy_interleaved_ref(audio_buf);
 
                         let samples = sbuf.samples();
@@ -249,7 +258,8 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
                 }
                 if segment_mono.len() >= WINDOW_SIZE_FAST * 2 {
                     windows_1024.push(segment_mono[..WINDOW_SIZE_FAST].to_vec());
-                    windows_1024.push(segment_mono[WINDOW_SIZE_FAST..WINDOW_SIZE_FAST * 2].to_vec());
+                    windows_1024
+                        .push(segment_mono[WINDOW_SIZE_FAST..WINDOW_SIZE_FAST * 2].to_vec());
                 }
             }
         }
@@ -267,7 +277,11 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
         while packets_read < max_packets_budget {
             let packet = match format.next_packet() {
                 Ok(p) => p,
-                Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(SymphoniaError::IoError(e))
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    break
+                }
                 Err(SymphoniaError::ResetRequired) => continue,
                 Err(_) => break,
             };
@@ -282,7 +296,8 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
                 Ok(audio_buf) => {
                     let spec = *audio_buf.spec();
                     let capacity = audio_buf.capacity();
-                    let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(capacity as u64, spec));
+                    let sbuf =
+                        sample_buf.get_or_insert_with(|| SampleBuffer::new(capacity as u64, spec));
                     sbuf.copy_interleaved_ref(audio_buf);
 
                     let samples = sbuf.samples();
@@ -298,11 +313,13 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
                         };
 
                         let mono = (l + r) * 0.5;
-                        let abs_mono = mono.abs();
-                        if abs_mono > max_peak {
-                            max_peak = abs_mono;
+                        let abs_l = l.abs();
+                        let abs_r = r.abs();
+                        let peak_sample = abs_l.max(abs_r);
+                        if peak_sample > max_peak {
+                            max_peak = peak_sample;
                         }
-                        if abs_mono >= 0.9999 {
+                        if abs_l >= 0.9999 || abs_r >= 0.9999 {
                             clipped_samples += 1;
                         }
                         sum_samples += mono as f64;

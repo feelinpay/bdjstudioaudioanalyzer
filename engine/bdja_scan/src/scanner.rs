@@ -1,11 +1,11 @@
+use crate::pipeline::analyze_single_file;
+use bdja_core::types::{FileReport, ENGINE_REV};
+use bdja_store::ReportStore;
+use jwalk::WalkDir;
+use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use jwalk::WalkDir;
-use rayon::prelude::*;
-use bdja_core::types::{FileReport, ENGINE_REV};
-use bdja_store::ReportStore;
-use crate::pipeline::analyze_single_file;
 
 pub const SUPPORTED_EXTENSIONS: &[&str] = &[
     "wav", "flac", "aif", "aiff", "mp3", "m4a", "aac", "ogg", "alac", "wma",
@@ -62,7 +62,11 @@ where
                     discovery_report_ticker += 1;
                     if discovery_report_ticker >= 50 {
                         discovery_report_ticker = 0;
-                        on_progress(0, discovered.len() as u64, format!("Descubriendo: {}", p.to_string_lossy()));
+                        on_progress(
+                            0,
+                            discovered.len() as u64,
+                            format!("Descubriendo: {}", p.to_string_lossy()),
+                        );
                     }
                 }
             }
@@ -150,9 +154,10 @@ where
                 Some(r) => r,
                 None => {
                     let path_buf = path.to_path_buf();
-                    let analyze_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        analyze_single_file(&path_buf)
-                    }));
+                    let analyze_res =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            analyze_single_file(&path_buf)
+                        }));
 
                     match analyze_res {
                         Ok(Ok(mut new_rep)) => {

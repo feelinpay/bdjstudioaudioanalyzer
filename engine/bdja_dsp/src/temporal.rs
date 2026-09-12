@@ -5,10 +5,7 @@ pub struct TemporalAnalysis {
     pub temporal_variance: f64,
 }
 
-pub fn analyze_temporal(
-    windows_1024: &[Vec<f32>],
-    windows_8192: &[Vec<f32>],
-) -> TemporalAnalysis {
+pub fn analyze_temporal(windows_1024: &[Vec<f32>], windows_8192: &[Vec<f32>]) -> TemporalAnalysis {
     let mut best_peak_mp3 = 0.0f64;
     let mut best_peak_aac = 0.0f64;
 
@@ -88,17 +85,21 @@ pub fn analyze_temporal(
         }
     }
 
-    // 3. E14: Temporal consistency (spectral envelope variance across windows)
-    let mut window_energies = Vec::new();
+    // 3. E14: Temporal consistency (high-frequency spectral envelope variance across windows)
+    let mut hf_ratios = Vec::new();
     for win in windows_8192 {
-        let e: f32 = win.iter().map(|s| s * s).sum();
-        window_energies.push(e as f64);
+        let total_energy: f32 = win.iter().map(|s| s * s).sum();
+        if total_energy > 1e-7 {
+            // First-order discrete difference acts as high-pass filter (> 10 kHz emphasis)
+            let hf_energy: f32 = win.windows(2).map(|w| (w[1] - w[0]) * (w[1] - w[0])).sum();
+            hf_ratios.push((hf_energy / total_energy) as f64);
+        }
     }
 
-    let temporal_variance = if window_energies.len() > 1 {
-        let mean = window_energies.iter().sum::<f64>() / window_energies.len() as f64;
-        let var = window_energies.iter().map(|e| (e - mean).powi(2)).sum::<f64>()
-            / window_energies.len() as f64;
+    let temporal_variance = if hf_ratios.len() > 1 {
+        let mean = hf_ratios.iter().sum::<f64>() / hf_ratios.len() as f64;
+        let var =
+            hf_ratios.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / hf_ratios.len() as f64;
         if mean > 1e-6 {
             (var.sqrt() / mean).min(5.0)
         } else {

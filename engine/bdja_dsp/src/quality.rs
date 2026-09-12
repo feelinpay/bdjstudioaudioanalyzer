@@ -65,6 +65,7 @@ impl Biquad {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn analyze_quality(
     samples_mono: &[f32],
     left_channel: &[f32],
@@ -110,7 +111,9 @@ pub fn analyze_quality(
                 let c1 = std::f32::consts::FRAC_2_PI;
                 let c2 = std::f32::consts::FRAC_2_PI / 3.0;
                 let interp = (channel[i] * c1 + channel[i + 1] * c1
-                    - channel[i - 1] * c2 - channel[i + 2] * c2).abs();
+                    - channel[i - 1] * c2
+                    - channel[i + 2] * c2)
+                    .abs();
                 if interp > peak {
                     peak = interp;
                 }
@@ -119,42 +122,107 @@ pub fn analyze_quality(
         peak
     };
 
-    let peak_l = if !left_channel.is_empty() { find_channel_true_peak(left_channel) } else { max_peak };
-    let peak_r = if !right_channel.is_empty() { find_channel_true_peak(right_channel) } else { max_peak };
+    let peak_l = if !left_channel.is_empty() {
+        find_channel_true_peak(left_channel)
+    } else {
+        max_peak
+    };
+    let peak_r = if !right_channel.is_empty() {
+        find_channel_true_peak(right_channel)
+    } else {
+        max_peak
+    };
     let peak_mono = find_channel_true_peak(samples_mono);
     let true_peak_linear = peak_l.max(peak_r).max(peak_mono).max(1e-6);
     let true_peak_dbtp = (20.0 * (true_peak_linear as f64).log10()).clamp(-120.0, 12.0);
 
-    // 2. ITU-R BS.1770-4 Integrated LUFS
+    // 2. ITU-R BS.1770-4 Integrated LUFS with Dual-Stage Gating
     let is_stereo = !left_channel.is_empty() && !right_channel.is_empty();
-    let lufs_integrated = if is_stereo {
-        let min_len = left_channel.len().min(right_channel.len());
-        let mut stage1_l = Biquad::new_high_shelf(fs);
-        let mut stage2_l = Biquad::new_high_pass_rlb(fs);
-        let mut stage1_r = Biquad::new_high_shelf(fs);
-        let mut stage2_r = Biquad::new_high_pass_rlb(fs);
+    let lufs_integrated = {
+        let block_len = ((0.400 * fs).round() as usize).max(64);
+        let hop = ((0.100 * fs).round() as usize).max(16);
 
-        let mut sum_sq_l = 0.0f64;
-        let mut sum_sq_r = 0.0f64;
-        for i in 0..min_len {
-            let y_l = stage2_l.process(stage1_l.process(left_channel[i] as f64));
-            let y_r = stage2_r.process(stage1_r.process(right_channel[i] as f64));
-            sum_sq_l += y_l * y_l;
-            sum_sq_r += y_r * y_r;
+        // Pre-filter entire audio with K-weighting cascade
+        let (filtered_l, filtered_r) = if is_stereo {
+            let min_len = left_channel.len().min(right_channel.len());
+            let mut stage1_l = Biquad::new_high_shelf(fs);
+            let mut stage2_l = Biquad::new_high_pass_rlb(fs);
+            let mut stage1_r = Biquad::new_high_shelf(fs);
+            let mut stage2_r = Biquad::new_high_pass_rlb(fs);
+
+            let mut y_l = Vec::with_capacity(min_len);
+            let mut y_r = Vec::with_capacity(min_len);
+            for i in 0..min_len {
+                y_l.push(stage2_l.process(stage1_l.process(left_channel[i] as f64)));
+                y_r.push(stage2_r.process(stage1_r.process(right_channel[i] as f64)));
+            }
+            (y_l, y_r)
+        } else {
+            let mut stage1 = Biquad::new_high_shelf(fs);
+            let mut stage2 = Biquad::new_high_pass_rlb(fs);
+            let mut y = Vec::with_capacity(samples_mono.len());
+            for &s in samples_mono {
+                y.push(stage2.process(stage1.process(s as f64)));
+            }
+            (y.clone(), y)
+        };
+
+        let num_samples = filtered_l.len();
+        let mut block_powers = Vec::new();
+
+        let mut start = 0;
+        while start + block_len <= num_samples {
+            let mut p_l = 0.0f64;
+            let mut p_r = 0.0f64;
+            for i in start..start + block_len {
+                p_l += filtered_l[i] * filtered_l[i];
+                p_r += filtered_r[i] * filtered_r[i];
+            }
+            let z_j = if is_stereo {
+                (p_l + p_r) / block_len as f64
+            } else {
+                p_l / block_len as f64
+            };
+            block_powers.push(z_j);
+            start += hop;
         }
-        let z_l = sum_sq_l / min_len as f64;
-        let z_r = sum_sq_r / min_len as f64;
-        (-0.691 + 10.0 * (z_l + z_r + 1e-12).log10()).clamp(-120.0, 0.0)
-    } else {
-        let mut stage1 = Biquad::new_high_shelf(fs);
-        let mut stage2 = Biquad::new_high_pass_rlb(fs);
-        let mut sum_sq = 0.0f64;
-        for &s in samples_mono {
-            let y = stage2.process(stage1.process(s as f64));
-            sum_sq += y * y;
+
+        if block_powers.is_empty() {
+            // Fallback para tramos más cortos que 400 ms
+            let mut sum = 0.0f64;
+            for i in 0..num_samples {
+                sum += filtered_l[i] * filtered_l[i] + filtered_r[i] * filtered_r[i];
+            }
+            let z = (sum / num_samples.max(1) as f64).max(1e-12);
+            (-0.691 + 10.0 * z.log10()).clamp(-120.0, 0.0)
+        } else {
+            // Gating absoluto: -70 LKFS (umbral de silencio)
+            let abs_thresh = 10.0f64.powf((-70.0 + 0.691) / 10.0);
+            let passing_abs: Vec<f64> = block_powers
+                .into_iter()
+                .filter(|&z| z >= abs_thresh)
+                .collect();
+
+            if passing_abs.is_empty() {
+                -70.0
+            } else {
+                // Gating relativo: -10 LU por debajo del promedio no bloqueado
+                let mean_abs = passing_abs.iter().sum::<f64>() / passing_abs.len() as f64;
+                let gamma_rel = -0.691 + 10.0 * (mean_abs.max(1e-12)).log10() - 10.0;
+                let rel_thresh = 10.0f64.powf((gamma_rel + 0.691) / 10.0);
+
+                let gated: Vec<f64> = passing_abs
+                    .into_iter()
+                    .filter(|&z| z >= rel_thresh)
+                    .collect();
+                if gated.is_empty() {
+                    gamma_rel
+                } else {
+                    let mean_gated = gated.iter().sum::<f64>() / gated.len() as f64;
+                    (-0.691 + 10.0 * (mean_gated.max(1e-12)).log10()).clamp(-120.0, 0.0)
+                }
+            }
         }
-        let z = sum_sq / samples_mono.len() as f64;
-        (-0.691 + 10.0 * (z + 1e-12).log10()).clamp(-120.0, 0.0)
     };
 
     // 3. Dynamic Range & RMS

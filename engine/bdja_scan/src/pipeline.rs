@@ -1,8 +1,8 @@
-use std::path::Path;
 use bdja_core::types::{Codec, FileReport, FormatFacts, QualityMetrics, Verdict, ENGINE_REV};
 use bdja_decode::decode_audio_file;
 use bdja_dsp::run_dsp_analysis;
 use bdja_verdict::evaluate_verdict;
+use std::path::Path;
 
 pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
     let metadata = match std::fs::metadata(path) {
@@ -64,7 +64,11 @@ pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
     }
 }
 
-fn analyze_single_file_inner(path: &Path, file_size: u64, path_str: &str) -> Result<FileReport, String> {
+fn analyze_single_file_inner(
+    path: &Path,
+    file_size: u64,
+    path_str: &str,
+) -> Result<FileReport, String> {
     // 1. Decode & Forensic header extraction
     let decoded = match decode_audio_file(path) {
         Ok(d) => d,

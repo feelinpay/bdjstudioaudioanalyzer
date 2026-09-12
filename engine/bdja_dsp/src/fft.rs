@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use realfft::{RealFftPlanner, RealToComplex};
+use std::sync::Arc;
 
 pub struct FftProcessor {
     fft_8192: Arc<dyn RealToComplex<f32>>,

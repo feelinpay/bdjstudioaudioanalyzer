@@ -36,11 +36,21 @@ impl Verdict {
     pub fn default_description(&self) -> &'static str {
         match self {
             Verdict::LosslessVerified => "No se encontraron evidencias de una fuente con pérdida.",
-            Verdict::LikelyLossless => "Sin evidencias relevantes. Algún indicador menor, compatible con el material.",
-            Verdict::Inconclusive => "No hay información suficiente para determinarlo con confianza.",
-            Verdict::Suspicious => "El archivo declara una calidad superior a la que parece contener.",
-            Verdict::ProbableTranscode => "Evidencia sólida compatible con una fuente MP3/AAC previamente comprimida.",
-            Verdict::DeclaredLossy => "Formato con pérdida declarado; contenedor y códec legítimos.",
+            Verdict::LikelyLossless => {
+                "Sin evidencias relevantes. Algún indicador menor, compatible con el material."
+            }
+            Verdict::Inconclusive => {
+                "No hay información suficiente para determinarlo con confianza."
+            }
+            Verdict::Suspicious => {
+                "El archivo declara una calidad superior a la que parece contener."
+            }
+            Verdict::ProbableTranscode => {
+                "Evidencia sólida compatible con una fuente MP3/AAC previamente comprimida."
+            }
+            Verdict::DeclaredLossy => {
+                "Formato con pérdida declarado; contenedor y códec legítimos."
+            }
         }
     }
 }
@@ -66,7 +76,14 @@ pub enum EvidenceCode {
 
 impl EvidenceCode {
     pub fn is_strong(&self) -> bool {
-        matches!(self, EvidenceCode::E01 | EvidenceCode::E04 | EvidenceCode::E05 | EvidenceCode::E07 | EvidenceCode::E13)
+        matches!(
+            self,
+            EvidenceCode::E01
+                | EvidenceCode::E04
+                | EvidenceCode::E05
+                | EvidenceCode::E07
+                | EvidenceCode::E13
+        )
     }
 
     pub fn label(&self) -> &'static str {
@@ -252,12 +269,33 @@ pub struct ScanOptions {
 /// Evento de progreso del escaneo reportado hacia Dart a 10 Hz.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ScanEvent {
-    JobStarted { job_id: i64, total_roots: usize },
-    FileProgress { job_id: i64, analyzed_count: u64, total_found: u64, current_path: String },
-    FileDone { job_id: i64, report: FileReport },
-    VolumeUnavailable { job_id: i64, root: String },
-    JobDone { job_id: i64, total_analyzed: u64, total_errors: u64 },
-    JobAborted { job_id: i64, reason: String },
+    JobStarted {
+        job_id: i64,
+        total_roots: usize,
+    },
+    FileProgress {
+        job_id: i64,
+        analyzed_count: u64,
+        total_found: u64,
+        current_path: String,
+    },
+    FileDone {
+        job_id: i64,
+        report: Box<FileReport>,
+    },
+    VolumeUnavailable {
+        job_id: i64,
+        root: String,
+    },
+    JobDone {
+        job_id: i64,
+        total_analyzed: u64,
+        total_errors: u64,
+    },
+    JobAborted {
+        job_id: i64,
+        reason: String,
+    },
 }
 
 /// Información de inicialización del motor.

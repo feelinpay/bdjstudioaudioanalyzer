@@ -95,7 +95,9 @@ fn test_dsp_brickwall_transcode_detection() {
             let freq = f_khz as f32 * 1000.0;
             let phase = phase_offset as f32 * 0.785;
             for (i, s) in win.iter_mut().enumerate() {
-                *s += (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 16.0;
+                *s += (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                    .sin()
+                    / 16.0;
             }
         }
         windows_8192.push(win);
@@ -160,7 +162,10 @@ fn test_dsp_natural_band_limited_guard() {
             };
             let phase = phase_offset as f32 * 0.5;
             for (i, s) in win.iter_mut().enumerate() {
-                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 15.0
+                *s += amp
+                    * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                        .sin()
+                    / 15.0
                     + next_dither();
             }
         }
@@ -201,7 +206,10 @@ fn test_dsp_natural_band_limited_guard() {
         output.effective_bandwidth_hz
     );
     assert!(
-        output.guards_triggered.iter().any(|g| g.contains("ancho de banda limitado")),
+        output
+            .guards_triggered
+            .iter()
+            .any(|g| g.contains("ancho de banda limitado")),
         "Should have triggered band-limited guard for gentle slope"
     );
 }
@@ -233,7 +241,10 @@ fn test_dsp_continuous_lossless_attains_verified() {
             let amp = 1.0 / (1.0 + (freq / 4000.0).powf(0.8)); // Decaimiento musical estándar
             let phase = phase_offset as f32 * 0.3 + f_idx as f32 * 0.1;
             for (i, s) in win.iter_mut().enumerate() {
-                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 35.0
+                *s += amp
+                    * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                        .sin()
+                    / 35.0
                     + next_dither();
             }
         }
@@ -275,9 +286,16 @@ fn test_dsp_continuous_lossless_attains_verified() {
     );
 
     // E01 debe haber otorgado el LLR negativo de exoneración (-1.8)
-    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01);
+    let e01 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E01);
     assert!(e01.is_some(), "E01 evidence must be present");
-    assert_eq!(e01.unwrap().llr, -1.8, "E01 LLR must be -1.8 for full lossless bandwidth");
+    assert_eq!(
+        e01.unwrap().llr,
+        -1.8,
+        "E01 LLR must be -1.8 for full lossless bandwidth"
+    );
 
     // Evaluar veredicto con el motor de veredicto
     let verdict_res = bdja_verdict::evaluate_verdict(
@@ -351,12 +369,22 @@ fn test_dsp_joint_stereo_collapse() {
         false,
     );
 
-    let e07 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E07);
+    let e07 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E07);
     assert!(e07.is_some(), "E07 must be present");
     let e07_ev = e07.unwrap();
     assert!(e07_ev.applicable, "E07 must be applicable for stereo");
-    assert!(e07_ev.llr > 2.0, "E07 LLR {} must be > 2.0 for intensity stereo collapse", e07_ev.llr);
-    assert!(output.is_strong_evidence_present, "Joint stereo collapse must count as strong evidence");
+    assert!(
+        e07_ev.llr > 2.0,
+        "E07 LLR {} must be > 2.0 for intensity stereo collapse",
+        e07_ev.llr
+    );
+    assert!(
+        output.is_strong_evidence_present,
+        "Joint stereo collapse must count as strong evidence"
+    );
 }
 
 #[test]
@@ -373,7 +401,10 @@ fn test_dsp_mp3_320_transcode_is_convicted() {
             let phase = phase_offset as f32 * 0.4 + f_idx as f32 * 0.2;
             let amp = 1.0 / (1.0 + (freq / 3500.0).powf(0.8));
             for (i, s) in win.iter_mut().enumerate() {
-                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 30.0;
+                *s += amp
+                    * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                        .sin()
+                    / 30.0;
             }
         }
         windows_8192.push(win);
@@ -407,13 +438,32 @@ fn test_dsp_mp3_320_transcode_is_convicted() {
     );
 
     // 1. Debe haber detectado el corte brickwall
-    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01).unwrap();
-    assert!(e01.llr > 0.0, "E01 debe penalizar con LLR positivo (+1.2), obtenido: {}", e01.llr);
+    let e01 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E01)
+        .unwrap();
+    assert!(
+        e01.llr > 0.0,
+        "E01 debe penalizar con LLR positivo (+1.2), obtenido: {}",
+        e01.llr
+    );
 
     // 2. E02 debe estar activa y medir pendiente vertical
-    let e02 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E02).unwrap();
-    assert!(e02.applicable, "E02 debe ser aplicable ante corte brick-wall");
-    assert!(e02.llr >= 1.0, "E02 debe penalizar con pendiente vertical, obtenido: {}", e02.llr);
+    let e02 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E02)
+        .unwrap();
+    assert!(
+        e02.applicable,
+        "E02 debe ser aplicable ante corte brick-wall"
+    );
+    assert!(
+        e02.llr >= 1.0,
+        "E02 debe penalizar con pendiente vertical, obtenido: {}",
+        e02.llr
+    );
 
     // 3. Evaluar veredicto
     let verdict_res = bdja_verdict::evaluate_verdict(
@@ -461,7 +511,10 @@ fn test_dsp_mp3_192_transcode_positive_conviction() {
             let phase = phase_offset as f32 * 0.4 + f_idx as f32 * 0.2;
             let amp = 1.0 / (1.0 + (freq / 3000.0).powf(0.8));
             for (i, s) in win.iter_mut().enumerate() {
-                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 30.0;
+                *s += amp
+                    * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                        .sin()
+                    / 30.0;
             }
         }
         windows_8192.push(win);
@@ -494,8 +547,16 @@ fn test_dsp_mp3_192_transcode_positive_conviction() {
         false,
     );
 
-    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01).unwrap();
-    assert!(e01.llr >= 1.6, "E01 debe aportar >= 1.6 para MP3 192, obtenido: {}", e01.llr);
+    let e01 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E01)
+        .unwrap();
+    assert!(
+        e01.llr >= 1.6,
+        "E01 debe aportar >= 1.6 para MP3 192, obtenido: {}",
+        e01.llr
+    );
 
     let verdict_res = bdja_verdict::evaluate_verdict(
         &facts,
@@ -504,9 +565,14 @@ fn test_dsp_mp3_192_transcode_positive_conviction() {
         output.is_strong_evidence_present,
     );
 
-    assert!(verdict_res.score_llr >= 2.7, "Score LLR {} debe ser >= 2.7 para MP3 192", verdict_res.score_llr);
     assert!(
-        verdict_res.verdict == bdja_core::types::Verdict::ProbableTranscode || verdict_res.verdict == bdja_core::types::Verdict::Suspicious,
+        verdict_res.score_llr >= 2.7,
+        "Score LLR {} debe ser >= 2.7 para MP3 192",
+        verdict_res.score_llr
+    );
+    assert!(
+        verdict_res.verdict == bdja_core::types::Verdict::ProbableTranscode
+            || verdict_res.verdict == bdja_core::types::Verdict::Suspicious,
         "MP3 192 debe ser condenado como ProbableTranscode o Suspicious! Obtenido: {:?}",
         verdict_res.verdict
     );
@@ -525,7 +591,10 @@ fn test_dsp_aac_256_transcode_positive_conviction() {
             let phase = phase_offset as f32 * 0.3 + f_idx as f32 * 0.15;
             let amp = 1.0 / (1.0 + (freq / 3500.0).powf(0.8));
             for (i, s) in win.iter_mut().enumerate() {
-                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 30.0;
+                *s += amp
+                    * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                        .sin()
+                    / 30.0;
             }
         }
         windows_8192.push(win);
@@ -565,9 +634,14 @@ fn test_dsp_aac_256_transcode_positive_conviction() {
         output.is_strong_evidence_present,
     );
 
-    assert!(verdict_res.score_llr >= 2.7, "Score LLR {} debe ser >= 2.7 para AAC 256", verdict_res.score_llr);
     assert!(
-        verdict_res.verdict == bdja_core::types::Verdict::ProbableTranscode || verdict_res.verdict == bdja_core::types::Verdict::Suspicious,
+        verdict_res.score_llr >= 2.7,
+        "Score LLR {} debe ser >= 2.7 para AAC 256",
+        verdict_res.score_llr
+    );
+    assert!(
+        verdict_res.verdict == bdja_core::types::Verdict::ProbableTranscode
+            || verdict_res.verdict == bdja_core::types::Verdict::Suspicious,
         "AAC 256 debe ser condenado como ProbableTranscode o Suspicious! Obtenido: {:?}",
         verdict_res.verdict
     );
@@ -587,7 +661,10 @@ fn test_dsp_dark_mix_mp3_128_detected() {
             let amp = 1.0 / (1.0 + (freq / 1500.0).powf(1.8));
             let phase = phase_offset as f32 * 0.5;
             for (i, s) in win.iter_mut().enumerate() {
-                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 15.0;
+                *s += amp
+                    * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                        .sin()
+                    / 15.0;
             }
         }
         windows_8192.push(win);
@@ -626,8 +703,15 @@ fn test_dsp_dark_mix_mp3_128_detected() {
         "Corte en mezcla oscura debe ser detectado a ~16000 Hz, obtenido: {}",
         output.effective_bandwidth_hz
     );
-    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01).unwrap();
-    assert_eq!(e01.llr, 2.2, "E01 debe aportar LLR +2.2 para corte a 16 kHz");
+    let e01 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E01)
+        .unwrap();
+    assert_eq!(
+        e01.llr, 2.2,
+        "E01 debe aportar LLR +2.2 para corte a 16 kHz"
+    );
 }
 
 #[test]
@@ -650,7 +734,10 @@ fn test_dsp_dark_mix_lossless_exonerated() {
             let amp = 1.0 / (1.0 + (freq / 1500.0).powf(3.0));
             let phase = phase_offset as f32 * 0.5;
             for (i, s) in win.iter_mut().enumerate() {
-                *s += amp * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase).sin() / 15.0
+                *s += amp
+                    * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                        .sin()
+                    / 15.0
                     + next_dither();
             }
         }
@@ -685,12 +772,124 @@ fn test_dsp_dark_mix_lossless_exonerated() {
     );
 
     // E01 no debe penalizar (LLR = 0.0)
-    let e01 = output.evidences.iter().find(|e| e.code == bdja_core::types::EvidenceCode::E01).unwrap();
-    assert_eq!(e01.llr, 0.0, "Mezcla oscura sin corte artificial no debe penalizarse en E01");
+    let e01 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E01)
+        .unwrap();
+    assert_eq!(
+        e01.llr, 0.0,
+        "Mezcla oscura sin corte artificial no debe penalizarse en E01"
+    );
 
     // Debe activar la guarda de material acústico limitado
     assert!(
-        output.guards_triggered.iter().any(|g| g.contains("ancho de banda limitado")),
+        output
+            .guards_triggered
+            .iter()
+            .any(|g| g.contains("ancho de banda limitado")),
         "Debe activar la guarda de material acústico limitado"
+    );
+}
+
+#[test]
+fn test_dsp_resampled_96k_master_is_not_convicted_as_transcode() {
+    let sample_rate = 96000;
+
+    // Máster de 44.1 kHz subido a 96 kHz: contenido musical hasta 22.05 kHz,
+    // y caída abrupta después (corte de Nyquist de 44.1k en un contenedor de 96k)
+    let mut rng: u32 = 987654321;
+    let mut next_dither = || -> f32 {
+        rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+        (((rng % 20000) as f32 / 10000.0) - 1.0) * 0.00001
+    };
+
+    let mut windows_8192 = Vec::new();
+    for phase_offset in 0..6 {
+        let mut win = vec![0.0f32; 8192];
+        // Armónicos densos hasta 21.8 kHz
+        for f_idx in 1..=80 {
+            let freq = 100.0 + f_idx as f32 * 270.0; // hasta ~21.7 kHz
+            let amp = 1.0 / (1.0 + (freq / 4000.0).powf(0.8));
+            let phase = phase_offset as f32 * 0.3 + f_idx as f32 * 0.1;
+            for (i, s) in win.iter_mut().enumerate() {
+                *s += amp
+                    * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                        .sin()
+                    / 30.0
+                    + next_dither();
+            }
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "FLAC".to_string(),
+        codec: "FLAC 24-bit".to_string(),
+        codec_type: Codec::Flac,
+        sample_rate,
+        bit_depth: Some(24),
+        channels: 2,
+        duration_ms: 240000,
+        container_bitrate_kbps: Some(2800),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.8,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let e01 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E01)
+        .unwrap();
+    let e10 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E10)
+        .unwrap();
+    let e11 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E11)
+        .unwrap();
+
+    // E01 y E11 deben ser neutrales respecto a transcode
+    assert_eq!(
+        e01.llr, 0.0,
+        "E01 debe ser neutral (0.0 LLR) ante remuestreo de tasa estándar"
+    );
+    assert_eq!(
+        e11.llr, 0.0,
+        "E11 debe ser neutral (0.0 LLR) ante remuestreo de tasa estándar"
+    );
+
+    // E10 debe acusar Falso Hi-Res / Upsampling positivamente
+    assert!(e10.llr >= 2.0, "E10 debe detectar falso Hi-Res");
+
+    // Y el veredicto final no debe condenar como transcode de MP3
+    let verdict_out = bdja_verdict::evaluate_verdict(
+        &facts,
+        &output.evidences,
+        &output.guards_triggered,
+        output.is_strong_evidence_present,
+    );
+
+    assert_ne!(
+        verdict_out.verdict,
+        bdja_core::types::Verdict::ProbableTranscode,
+        "Un máster remuestreado a 96k NUNCA debe condenarse como ProbableTranscode de MP3"
     );
 }

@@ -6,8 +6,8 @@ param(
     BDJ Studio Audio Analyzer - Build de la parte nativa (Windows)
 
     1. Regenera el puente (flutter_rust_bridge_codegen generate).
-    2. Compila el engine en release (FFI, worker, cli).
-    3. Copia bdja_ffi.dll y bdja_worker.exe a las carpetas Debug y Release.
+    2. Compila el engine en release (FFI, CLI).
+    3. Copia bdja_ffi.dll, bdja_cli.exe y artefactos a las carpetas Debug y Release.
 #>
 
 $ErrorActionPreference = 'Stop'
