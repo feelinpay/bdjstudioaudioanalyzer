@@ -360,10 +360,43 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
         0.0
     };
 
+    // Calculate real LSB zero ratio and estimated bit depth
+    let declared_b = bit_depth.unwrap_or(16);
+    let mut zero_lsb_count = 0u64;
+    let mut evaluated_samples = 0u64;
+    for &s in &left_samples {
+        if s.abs() > 1e-5 {
+            if declared_b >= 24 {
+                let int_val = (s * 8388607.0).round().abs() as i64;
+                if (int_val & 0xFF) == 0 {
+                    zero_lsb_count += 1;
+                }
+            } else if declared_b == 16 {
+                let int_val = (s * 32767.0).round().abs() as i64;
+                if (int_val & 0xFF) == 0 {
+                    zero_lsb_count += 1;
+                }
+            }
+            evaluated_samples += 1;
+        }
+    }
+    let zero_lsb_ratio = if evaluated_samples > 100 {
+        zero_lsb_count as f64 / evaluated_samples as f64
+    } else {
+        0.0
+    };
+    let estimated_real_bits = if declared_b >= 24 && zero_lsb_ratio > 0.85 {
+        16
+    } else if declared_b == 16 && zero_lsb_ratio > 0.85 {
+        8
+    } else {
+        declared_b
+    };
+
     let bit_depth_stats = BitDepthStats {
         declared_bits: bit_depth,
-        estimated_real_bits: bit_depth.unwrap_or(16),
-        zero_lsb_ratio: 0.0,
+        estimated_real_bits,
+        zero_lsb_ratio,
     };
 
     Ok(DecodedAudio {

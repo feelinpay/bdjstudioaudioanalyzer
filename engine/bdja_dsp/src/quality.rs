@@ -211,7 +211,24 @@ pub fn analyze_quality(
     let mut bit_depth_inflated = false;
 
     if declared_bits >= 24 {
-        if noise_floor_db > -90.0 {
+        let mut zero_lsb_count = 0usize;
+        let mut non_zero_count = 0usize;
+        for &s in samples_mono {
+            if s.abs() > 1e-5 {
+                let int_val = (s * 8388607.0).round().abs() as i64;
+                if (int_val & 0xFF) == 0 {
+                    zero_lsb_count += 1;
+                }
+                non_zero_count += 1;
+            }
+        }
+        let zero_lsb_ratio = if non_zero_count > 100 {
+            zero_lsb_count as f64 / non_zero_count as f64
+        } else {
+            0.0
+        };
+
+        if zero_lsb_ratio > 0.85 || noise_floor_db > -90.0 {
             real_bit_depth = 16;
             bit_depth_inflated = true;
         }
