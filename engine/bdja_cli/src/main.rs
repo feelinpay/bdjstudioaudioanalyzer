@@ -182,7 +182,7 @@ fn run_scan(dir_str: &str) {
 
     match bdja_scan::scan_collection(
         &roots,
-        "turbo",
+        "normal",
         false,
         None,
         cancel,

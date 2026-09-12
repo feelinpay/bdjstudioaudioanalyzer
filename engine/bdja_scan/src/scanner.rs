@@ -168,7 +168,104 @@ where
                             }
                             new_rep
                         }
-                        _ => return, // Continúa de forma segura si un archivo está dañado
+                        Ok(Err(err_msg)) => {
+                            let mut err_rep = bdja_core::types::FileReport {
+                                file_id: 0,
+                                path: path_str.clone(),
+                                file_size,
+                                engine_rev: ENGINE_REV,
+                                facts: bdja_core::types::FormatFacts {
+                                    container: path
+                                        .extension()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("UNKNOWN")
+                                        .to_uppercase(),
+                                    codec: "Error/Corrupted".to_string(),
+                                    codec_type: bdja_core::types::Codec::Unknown,
+                                    sample_rate: 0,
+                                    bit_depth: None,
+                                    channels: 0,
+                                    duration_ms: 0,
+                                    container_bitrate_kbps: None,
+                                    is_lossless_declared: false,
+                                },
+                                verdict: bdja_core::types::Verdict::Inconclusive,
+                                confidence: 0.0,
+                                score_llr: 0.0,
+                                effective_bandwidth_hz: None,
+                                cutoff_slope_db_oct: None,
+                                evidences: Vec::new(),
+                                quality: bdja_core::types::QualityMetrics {
+                                    true_peak_dbtp: None,
+                                    lufs_integrated: None,
+                                    clipped_samples: 0,
+                                    dc_offset: None,
+                                    dynamic_range_db: None,
+                                    stereo_correlation: None,
+                                },
+                                guards_triggered: vec![
+                                    "Fallo al decodificar audio (archivo ilegible o corrupto)".to_string(),
+                                ],
+                                verdict_summary: format!("Error analizando archivo: {}", err_msg),
+                                average_spectrum_db: Vec::new(),
+                            };
+                            if let Some(ref st) = store {
+                                if let Ok(id) = st.save_report(&err_rep) {
+                                    err_rep.file_id = id;
+                                }
+                            }
+                            err_rep
+                        }
+                        Err(_) => {
+                            let mut err_rep = bdja_core::types::FileReport {
+                                file_id: 0,
+                                path: path_str.clone(),
+                                file_size,
+                                engine_rev: ENGINE_REV,
+                                facts: bdja_core::types::FormatFacts {
+                                    container: path
+                                        .extension()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("UNKNOWN")
+                                        .to_uppercase(),
+                                    codec: "Panic/Corrupted".to_string(),
+                                    codec_type: bdja_core::types::Codec::Unknown,
+                                    sample_rate: 0,
+                                    bit_depth: None,
+                                    channels: 0,
+                                    duration_ms: 0,
+                                    container_bitrate_kbps: None,
+                                    is_lossless_declared: false,
+                                },
+                                verdict: bdja_core::types::Verdict::Inconclusive,
+                                confidence: 0.0,
+                                score_llr: 0.0,
+                                effective_bandwidth_hz: None,
+                                cutoff_slope_db_oct: None,
+                                evidences: Vec::new(),
+                                quality: bdja_core::types::QualityMetrics {
+                                    true_peak_dbtp: None,
+                                    lufs_integrated: None,
+                                    clipped_samples: 0,
+                                    dc_offset: None,
+                                    dynamic_range_db: None,
+                                    stereo_correlation: None,
+                                },
+                                guards_triggered: vec![
+                                    "Pánico interceptado por seguridad".to_string()
+                                ],
+                                verdict_summary:
+                                    "Pánico no controlado durante la decodificación (archivo severamente malformado)"
+                                        .to_string(),
+                                average_spectrum_db: Vec::new(),
+                            };
+                            if let Some(ref st) = store {
+                                if let Ok(id) = st.save_report(&err_rep) {
+                                    err_rep.file_id = id;
+                                }
+                            }
+                            err_rep
+                        }
                     }
                 }
             };

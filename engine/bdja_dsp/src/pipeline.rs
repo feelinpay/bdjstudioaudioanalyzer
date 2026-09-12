@@ -114,13 +114,10 @@ pub fn run_dsp_analysis(
     let cliff = spec.cutoff_kind == bdja_core::types::CutoffKind::BrickwallCutoff;
 
     // Comprobación de corte por remuestreo / Falso Hi-Res desde tasa estándar inferior
+    // Solo tasas estándar de máster de estudio (44.1 y 48 kHz). 32k y 22k se descartan porque
+    // 16 kHz coincide exactamente con el lowpass típico de MP3 128 kbps.
     let is_resampled_cutoff: Option<(u32, f64)> = if facts.sample_rate >= 48000 && cliff {
-        let candidates = [
-            (44100u32, 22050.0),
-            (48000u32, 24000.0),
-            (32000u32, 16000.0),
-            (22050u32, 11025.0),
-        ];
+        let candidates = [(44100u32, 22050.0), (48000u32, 24000.0)];
         candidates
             .into_iter()
             .find(|&(rate, nyq)| facts.sample_rate > rate && (e01_hz - nyq).abs() <= 850.0)
@@ -132,12 +129,14 @@ pub fn run_dsp_analysis(
         && !has_lossy_encoder_signature
         && (spec.spectral_holes_ratio < 0.08);
 
-    if let Some((orig_rate, _)) = is_resampled_cutoff {
-        guards.push(format!(
-            "Borde espectral en {:.1} kHz coincidente con el límite de Nyquist de {} kHz (falso Hi-Res por remuestreo; material de origen a tasa estándar)",
-            e01_hz / 1000.0,
-            orig_rate / 1000
-        ));
+    if is_pure_upsampling {
+        if let Some((orig_rate, _)) = is_resampled_cutoff {
+            guards.push(format!(
+                "Borde espectral en {:.1} kHz coincidente con el límite de Nyquist de {} kHz (falso Hi-Res por remuestreo; material de origen a tasa estándar)",
+                e01_hz / 1000.0,
+                orig_rate / 1000
+            ));
+        }
     }
 
     let (e01_llr, e01_desc, e01_val) = match spec.cutoff_kind {

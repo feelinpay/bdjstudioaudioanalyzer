@@ -184,47 +184,30 @@ fn hash_to_visible_hwid(canonical: &str) -> String {
     }
 }
 
+static HWID_CANDIDATES_CACHE: RwLock<Option<Vec<String>>> = RwLock::new(None);
+
+pub fn get_or_derive_hwid_candidates() -> Vec<String> {
+    {
+        let cache = HWID_CANDIDATES_CACHE.read();
+        if let Some(ref list) = *cache {
+            return list.clone();
+        }
+    }
+
+    let candidates = derive_native_hwid_candidates();
+    if !candidates.is_empty() {
+        let mut cache = HWID_CANDIDATES_CACHE.write();
+        *cache = Some(candidates.clone());
+    }
+    candidates
+}
+
 pub fn derive_native_hwid_candidates() -> Vec<String> {
     let mut candidates = Vec::new();
 
     #[cfg(target_os = "windows")]
     {
-        // 1. Candidato WMI (SMBIOS UUID + CPU + Baseboard)
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "$p = Get-CimInstance Win32_ComputerSystemProduct; $c = Get-CimInstance Win32_Processor; $b = Get-CimInstance Win32_BaseBoard; \"$($p.UUID)`n$($c.ProcessorId)`n$($b.SerialNumber)\"",
-            ])
-            .output()
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let lines: Vec<&str> = stdout.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
-                if !lines.is_empty() {
-                    let uuid = lines[0].to_lowercase();
-                    let cpu = if lines.len() > 1 { lines[1].to_lowercase() } else { String::new() };
-                    let board = if lines.len() > 2 { lines[2].to_lowercase() } else { String::new() };
-
-                    if !uuid.is_empty() && uuid != "null" {
-                        let mut pairs = Vec::new();
-                        if !board.is_empty() && board != "null" {
-                            pairs.push(format!("baseboardserial={}", board));
-                        }
-                        if !cpu.is_empty() && cpu != "null" {
-                            pairs.push(format!("cpuid={}", cpu));
-                        }
-                        pairs.push(format!("smbiosuuid={}", uuid));
-                        pairs.sort();
-                        let canonical = format!("BDJ-HWID-V2|platform=windows|{}", pairs.join("|"));
-                        candidates.push(hash_to_visible_hwid(&canonical));
-                    }
-                }
-            }
-        }
-
-        // 2. Candidato Registro MachineGuid
+        // 1. Candidato Registro MachineGuid (Vía directa rápida, ~3 ms)
         if let Ok(output) = std::process::Command::new("reg")
             .args([
                 "query",
@@ -247,6 +230,53 @@ pub fn derive_native_hwid_candidates() -> Vec<String> {
                                 candidates.push(hash_to_visible_hwid(&canonical));
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // 2. Candidato WMI (SMBIOS UUID + CPU + Baseboard)
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$p = Get-CimInstance Win32_ComputerSystemProduct; $c = Get-CimInstance Win32_Processor; $b = Get-CimInstance Win32_BaseBoard; \"$($p.UUID)`n$($c.ProcessorId)`n$($b.SerialNumber)\"",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let lines: Vec<&str> = stdout
+                    .lines()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty())
+                    .collect();
+                if !lines.is_empty() {
+                    let uuid = lines[0].to_lowercase();
+                    let cpu = if lines.len() > 1 {
+                        lines[1].to_lowercase()
+                    } else {
+                        String::new()
+                    };
+                    let board = if lines.len() > 2 {
+                        lines[2].to_lowercase()
+                    } else {
+                        String::new()
+                    };
+
+                    if !uuid.is_empty() && uuid != "null" {
+                        let mut pairs = Vec::new();
+                        if !board.is_empty() && board != "null" {
+                            pairs.push(format!("baseboardserial={}", board));
+                        }
+                        if !cpu.is_empty() && cpu != "null" {
+                            pairs.push(format!("cpuid={}", cpu));
+                        }
+                        pairs.push(format!("smbiosuuid={}", uuid));
+                        pairs.sort();
+                        let canonical = format!("BDJ-HWID-V2|platform=windows|{}", pairs.join("|"));
+                        candidates.push(hash_to_visible_hwid(&canonical));
                     }
                 }
             }
@@ -347,17 +377,21 @@ pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineI
         return Err("HWID de dispositivo inválido o con entropía insuficiente".to_string());
     }
 
-    // Verificación nativa de coincidencia con hardware físico
-    if std::env::var("BDJA_SKIP_HWID_CHECK").is_err() && !cfg!(test) {
-        let candidates = derive_native_hwid_candidates();
-        if !candidates.is_empty() {
-            let matched = candidates.iter().any(|c| c.eq_ignore_ascii_case(hwid));
-            if !matched {
-                return Err(
-                    "El HWID del token no corresponde al hardware físico de este equipo"
-                        .to_string(),
-                );
-            }
+    // Verificación nativa de coincidencia con hardware físico (Fail-closed estricto)
+    #[cfg(not(test))]
+    {
+        let candidates = get_or_derive_hwid_candidates();
+        if candidates.is_empty() {
+            return Err(
+                "Fallo de seguridad: no se pudo obtener la identidad de hardware de esta máquina física para verificar la licencia"
+                    .to_string(),
+            );
+        }
+        let matched = candidates.iter().any(|c| c.eq_ignore_ascii_case(hwid));
+        if !matched {
+            return Err(
+                "El HWID del token no corresponde al hardware físico de este equipo".to_string(),
+            );
         }
     }
 
@@ -448,7 +482,8 @@ pub fn analyze_file(path: String) -> Result<FileReportFfi, String> {
     Ok(map_report_to_ffi(report))
 }
 
-/// Analisis rapido preliminar (alias compatible).
+/// Analisis rapido preliminar (alias compatible deprecado hacia analyze_file).
+#[deprecated(since = "1.0.0", note = "Usar analyze_file directamente")]
 pub fn analyze_file_quick(path: String) -> Result<FileReportFfi, String> {
     analyze_file(path)
 }
@@ -618,7 +653,8 @@ pub fn cancel_all_scans() -> bool {
     false
 }
 
-/// Escanea una carpeta o unidad y analiza hasta `max_files` archivos de audio encontrados (0 para ilimitado).
+/// Escanea una carpeta o unidad de forma síncrona (deprecado hacia start_scan_job).
+#[deprecated(since = "1.0.0", note = "Usar start_scan_job para escaneo asíncrono")]
 pub fn scan_directory_audio(
     root_path: String,
     max_files: u32,
@@ -642,7 +678,7 @@ pub fn scan_directory_audio(
 
     let _ = bdja_scan::scan_collection(
         &roots,
-        "turbo",
+        "normal",
         false,
         store_arc,
         cancel_token,

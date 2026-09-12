@@ -893,3 +893,83 @@ fn test_dsp_resampled_96k_master_is_not_convicted_as_transcode() {
         "Un máster remuestreado a 96k NUNCA debe condenarse como ProbableTranscode de MP3"
     );
 }
+
+#[test]
+fn test_dsp_mp3_128_resampled_to_96k_is_convicted_as_transcode() {
+    let sample_rate = 96000;
+
+    // MP3 128 kbps (corte en ~16 kHz) remuestreado a 96 kHz
+    let mut windows_8192 = Vec::new();
+    for phase_offset in 0..4 {
+        let mut win = vec![0.0f32; 8192];
+        for f_khz in 1..=16 {
+            let freq = f_khz as f32 * 1000.0;
+            let phase = phase_offset as f32 * 0.785;
+            for (i, s) in win.iter_mut().enumerate() {
+                *s += (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                    .sin()
+                    / 16.0;
+            }
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "FLAC".to_string(),
+        codec: "FLAC 24-bit".to_string(),
+        codec_type: Codec::Flac,
+        sample_rate,
+        bit_depth: Some(24),
+        channels: 2,
+        duration_ms: 240000,
+        container_bitrate_kbps: Some(2800),
+        is_lossless_declared: true,
+    };
+
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &[],
+        &[],
+        &[],
+        0.8,
+        0,
+        0.0,
+        true, // Tiene firma LAME detectada
+        Some("LAME3.99r"),
+        false,
+        false,
+    );
+
+    let e01 = output
+        .evidences
+        .iter()
+        .find(|e| e.code == bdja_core::types::EvidenceCode::E01)
+        .unwrap();
+
+    // No debe ser clasificado como remuestreo puro de estudio (E01 debe condenar)
+    assert!(
+        e01.llr >= 1.5,
+        "E01 debe condenar corte de 16 kHz como transcode (obtenido: {})",
+        e01.llr
+    );
+    assert!(
+        output.guards_triggered.is_empty(),
+        "No debe haber guardas de remuestreo bloqueando la condena"
+    );
+
+    let verdict_out = bdja_verdict::evaluate_verdict(
+        &facts,
+        &output.evidences,
+        &output.guards_triggered,
+        output.is_strong_evidence_present,
+    );
+
+    assert_eq!(
+        verdict_out.verdict,
+        bdja_core::types::Verdict::ProbableTranscode,
+        "Un MP3 128 subido a 96k DEBE ser condenado como ProbableTranscode. Obtenido: {:?}, score: {}",
+        verdict_out.verdict,
+        verdict_out.score_llr
+    );
+}

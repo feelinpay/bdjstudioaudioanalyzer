@@ -530,10 +530,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildScanningProgress() {
     final pct = _totalToAnalyze > 0 ? (_analyzedCount / _totalToAnalyze).clamp(0.0, 1.0) : 0.0;
+    final failuresText = _countInconclusive > 0 ? ' · $_countInconclusive fallos/ilegibles' : '';
     final progressText = _totalToAnalyze > 0
-        ? 'Analizando audio... $_analyzedCount de $_totalToAnalyze (${(pct * 100).toStringAsFixed(0)}%)'
+        ? 'Analizando audio... $_analyzedCount de $_totalToAnalyze (${(pct * 100).toStringAsFixed(0)}%)$failuresText'
         : (_analyzedCount > 0
-            ? 'Analizando audio... $_analyzedCount pistas procesadas'
+            ? 'Analizando audio... $_analyzedCount pistas procesadas$failuresText'
             : 'Descubriendo pistas de audio...');
 
     return Container(
@@ -922,7 +923,7 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(width: 10),
         _summaryCard('SOSPECHOSOS', '$_countSuspicious', AppColors.verdictSuspicious, Icons.warning_amber_rounded),
         const SizedBox(width: 10),
-        _summaryCard('INCONCLUSOS', '$_countInconclusive', AppColors.verdictInconclusive, Icons.help_outline_rounded),
+        _summaryCard('FALLOS / INCONCLUSOS', '$_countInconclusive', AppColors.verdictInconclusive, Icons.help_outline_rounded),
         const SizedBox(width: 10),
         _summaryCard('DECLARADO LOSSY', '$_countDeclared', AppColors.verdictDeclared, Icons.info_outline_rounded),
       ],
