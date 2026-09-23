@@ -3,9 +3,9 @@ name: Build macOS
 # ============================================================
 # MODELO DE DISTRIBUCIÓN: DIRECTA Y FUERA DE TIENDAS
 # ============================================================
-# Todo el ecosistema BDJ Studio se distribuye directamente.
-# Este workflow genera exclusivamente artefactos para distribución directa:
-# GitHub Actions Artifacts y Releases (sin requerir firma comercial de Apple).
+# Todo el ecosistema BDJ Studio se distribuye directamente por el desarrollador.
+# Genera exclusivamente artefactos para distribución directa: GitHub Actions Artifacts y Releases.
+# Genera 2 paquetes independientes: Apple Silicon (arm64) e Intel (x64).
 
 on:
   push:
@@ -24,11 +24,11 @@ jobs:
       matrix:
         include:
           - architecture: arm64
-            target: aarch64-apple-darwin
             runner: macos-15
+            rust_target: aarch64-apple-darwin
           - architecture: x64
-            target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-15-intel
+            rust_target: x86_64-apple-darwin
 
     steps:
       - name: Checkout repository
@@ -41,10 +41,10 @@ jobs:
           path: bdj_license_core
           token: ${{ secrets.CORE_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Setup Rust toolchain
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_target }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -55,61 +55,66 @@ jobs:
       - name: Show environment
         run: |
           flutter --version
-          rustc --version
           cargo --version
+          rustc --version
+          xcodebuild -version
           uname -m
 
       - name: Enable macOS desktop
         run: flutter config --enable-macos-desktop
 
-      - name: Install dependencies
+      - name: Link bdj_license_core and Install Flutter dependencies
         run: |
-          mkdir -p ../../bdj_license_core 2>/dev/null || true
-          cp -R bdj_license_core/* ../../bdj_license_core/ 2>/dev/null || cp -R "$GITHUB_WORKSPACE/bdj_license_core"/* ../../bdj_license_core/ || true
+          # Asegurar que el path relativo ../../bdj_license_core funcione desde frontend/ como en BDJ Studio Sample Pad y Search Pro
+          mkdir -p "$GITHUB_WORKSPACE/../bdj_license_core" 2>/dev/null || true
+          cp -R "$GITHUB_WORKSPACE/bdj_license_core"/* "$GITHUB_WORKSPACE/../bdj_license_core/" 2>/dev/null || cp -R bdj_license_core/* "$GITHUB_WORKSPACE/../bdj_license_core/" || true
           cd frontend
+          mkdir -p ../../bdj_license_core 2>/dev/null || true
+          cp -R ../bdj_license_core/* ../../bdj_license_core/ 2>/dev/null || cp -R "$GITHUB_WORKSPACE/bdj_license_core"/* ../../bdj_license_core/ || true
           flutter pub get
 
-      - name: Analyze Flutter project
+      - name: Run Engine Tests
+        run: |
+          cd engine
+          cargo test --workspace --target ${{ matrix.rust_target }}
+
+      - name: Compile Native Engine in Release (${{ matrix.architecture }})
+        run: |
+          cd engine
+          cargo build --release --target ${{ matrix.rust_target }} -p bdja_ffi -p bdja_cli
+
+      - name: Run Flutter Analyze & Tests
         run: |
           cd frontend
           flutter analyze
-
-      - name: Run Flutter tests
-        run: |
-          cd frontend
           flutter test
-
-      - name: Build Rust Native Engine (Release - ${{ matrix.target }})
-        run: |
-          cd engine
-          cargo build --release -p bdja_ffi --target ${{ matrix.target }}
 
       - name: Build macOS Application (Release)
         run: |
           cd frontend
           flutter build macos --release
 
-      - name: Bundle Native Library into .app Frameworks
+      - name: Integrate Native Libraries into Application Bundle
         shell: bash
         run: |
           set -euo pipefail
           APP_PATH="$(find frontend/build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' -print -quit)"
           if [ -z "$APP_PATH" ]; then
-            echo "::error::No se encontró el bundle .app compilado."
+            echo "::error::No se encontró la aplicación .app generada en Release"
             exit 1
           fi
-          echo "Bundle localizado: $APP_PATH"
-          FRAMEWORKS_DIR="$APP_PATH/Contents/Frameworks"
-          mkdir -p "$FRAMEWORKS_DIR"
+          echo "Integrando binarios nativos en: $APP_PATH"
+          mkdir -p "$APP_PATH/Contents/Frameworks" "$APP_PATH/Contents/MacOS"
           
-          DYLIB_SRC="engine/target/${{ matrix.target }}/release/libbdja_ffi.dylib"
-          if [ ! -f "$DYLIB_SRC" ]; then
-            echo "::error::No se encontró la librería nativa en $DYLIB_SRC"
-            exit 1
+          RUST_OUT="engine/target/${{ matrix.rust_target }}/release"
+          if [ ! -d "$RUST_OUT" ]; then
+            RUST_OUT="engine/target/release"
           fi
           
-          cp "$DYLIB_SRC" "$FRAMEWORKS_DIR/libbdja_ffi.dylib"
-          echo "Librería copiada a $FRAMEWORKS_DIR/libbdja_ffi.dylib"
+          cp "$RUST_OUT/libbdja_ffi.dylib" "$APP_PATH/Contents/Frameworks/"
+          cp "$RUST_OUT/libbdja_ffi.dylib" "$APP_PATH/Contents/MacOS/"
+          cp "$RUST_OUT/bdja_cli" "$APP_PATH/Contents/MacOS/" || true
+          chmod +x "$APP_PATH/Contents/MacOS/bdja_cli" 2>/dev/null || true
 
       - name: Ad-Hoc Code Signing (Permite ejecución directa sin firma de pago)
         shell: bash
