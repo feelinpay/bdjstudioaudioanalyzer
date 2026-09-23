@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.bdjstudio" "\0"
+            VALUE "CompanyName", "BDJ Studio" "\0"
             VALUE "FileDescription", "bdj_studio_audio_analyzer" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "bdj_studio_audio_analyzer" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.bdjstudio. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 BDJ Studio. All rights reserved." "\0"
             VALUE "OriginalFilename", "bdj_studio_audio_analyzer.exe" "\0"
-            VALUE "ProductName", "bdj_studio_audio_analyzer" "\0"
+            VALUE "ProductName", "BDJ Studio Audio Analyzer" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

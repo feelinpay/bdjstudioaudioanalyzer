@@ -1,4 +1,4 @@
-use bdja_core::types::{Evidence, FileReport, FormatFacts, QualityMetrics, Verdict};
+use bdja_core::types::{CutoffKind, Evidence, FileReport, FormatFacts, QualityMetrics, Verdict};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
@@ -8,7 +8,7 @@ pub struct ReportStore {
     conn: Mutex<Connection>,
 }
 
-const SELECT_FIELDS: &str = "id, path, file_size, engine_rev, container, codec, sample_rate, bit_depth, channels, duration_ms, container_bitrate_kbps, is_lossless_declared, verdict, confidence, score_llr, effective_bandwidth_hz, cutoff_slope_db_oct, true_peak_dbtp, lufs_integrated, clipped_samples, dc_offset, dynamic_range_db, stereo_correlation, guards_json, evidences_json, verdict_summary, codec_type, spectrum_json";
+const SELECT_FIELDS: &str = "id, path, file_size, engine_rev, container, codec, sample_rate, bit_depth, channels, duration_ms, container_bitrate_kbps, is_lossless_declared, verdict, confidence, score_llr, effective_bandwidth_hz, cutoff_slope_db_oct, true_peak_dbtp, lufs_integrated, clipped_samples, dc_offset, dynamic_range_db, stereo_correlation, guards_json, evidences_json, verdict_summary, codec_type, spectrum_json, cutoff_kind";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DuplicateGroup {
@@ -58,6 +58,13 @@ fn parse_report_row(row: &rusqlite::Row) -> Result<FileReport, rusqlite::Error> 
     let verdict_summary: String = row.get(25)?;
     let codec_type_str: String = row.get(26).unwrap_or_else(|_| "Unknown".to_string());
     let spectrum_json: String = row.get(27).unwrap_or_else(|_| "[]".to_string());
+    let cutoff_kind_str: Option<String> = row.get(28).ok();
+    let cutoff_kind = cutoff_kind_str.as_deref().and_then(|s| match s {
+        "BrickwallCutoff" => Some(CutoffKind::BrickwallCutoff),
+        "FullSpectrum" => Some(CutoffKind::FullSpectrum),
+        "NaturalRolloff" => Some(CutoffKind::NaturalRolloff),
+        _ => None,
+    });
 
     let verdict = match verdict_str.as_str() {
         "LosslessVerified" => Verdict::LosslessVerified,
@@ -108,6 +115,7 @@ fn parse_report_row(row: &rusqlite::Row) -> Result<FileReport, rusqlite::Error> 
         score_llr,
         effective_bandwidth_hz,
         cutoff_slope_db_oct,
+        cutoff_kind,
         evidences,
         quality: QualityMetrics {
             true_peak_dbtp,
@@ -151,7 +159,19 @@ impl ReportStore {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap_or(0);
 
-        if version < 1 {
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_report')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
+
+        // Si la base de datos es nueva (version == 0 y la tabla file_report aún no existe),
+        // se crea el esquema completo v3 de una sola vez y se fija user_version = 3 sin pasar por migraciones.
+        // Si la tabla ya existía (ej. compilación previa no versionada con user_version = 0),
+        // no se toma este atajo para permitir que los bloques de migración inferiores apliquen las columnas faltantes.
+        if version == 0 && !table_exists {
             conn.execute_batch(
                 "
                 CREATE TABLE IF NOT EXISTS file_report (
@@ -175,6 +195,7 @@ impl ReportStore {
                     score_llr REAL NOT NULL,
                     effective_bandwidth_hz INTEGER,
                     cutoff_slope_db_oct REAL,
+                    cutoff_kind TEXT,
                     true_peak_dbtp REAL,
                     lufs_integrated REAL,
                     clipped_samples INTEGER NOT NULL,
@@ -200,34 +221,53 @@ impl ReportStore {
                     updated_at INTEGER NOT NULL DEFAULT 0
                 );
 
-                PRAGMA user_version = 1;
+                PRAGMA user_version = 3;
                 ",
             )?;
+            return Ok(());
+        }
+
+        // Helper para migraciones de bases preexistentes: sólo tolera si la columna
+        // ya existía previamente (duplicate column name), pero propaga fallos reales (I/O, lock, disco lleno).
+        fn alter_ignore_duplicate(
+            conn: &rusqlite::Connection,
+            sql: &str,
+        ) -> Result<(), rusqlite::Error> {
+            match conn.execute(sql, []) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("duplicate column name") {
+                        Ok(())
+                    } else {
+                        Err(e)
+                    }
+                }
+            }
         }
 
         if version < 2 {
-            // Migraciones seguras para bases preexistentes
-            let _ = conn.execute(
+            alter_ignore_duplicate(
+                &conn,
                 "ALTER TABLE file_report ADD COLUMN codec_type TEXT NOT NULL DEFAULT 'Unknown'",
-                [],
-            );
-            let _ = conn.execute(
+            )?;
+            alter_ignore_duplicate(
+                &conn,
                 "ALTER TABLE file_report ADD COLUMN spectrum_json TEXT NOT NULL DEFAULT '[]'",
-                [],
-            );
-            let _ = conn.execute(
+            )?;
+            alter_ignore_duplicate(
+                &conn,
                 "ALTER TABLE file_report ADD COLUMN mtime_utc INTEGER NOT NULL DEFAULT 0",
-                [],
-            );
-            let _ = conn.execute(
+            )?;
+            alter_ignore_duplicate(
+                &conn,
                 "ALTER TABLE file_report ADD COLUMN blake3_hash TEXT NOT NULL DEFAULT ''",
-                [],
-            );
-            let _ = conn.execute(
+            )?;
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_blake3 ON file_report(blake3_hash)",
                 [],
-            );
-            let _ = conn.execute(
+            )?;
+            conn.execute(
                 "CREATE TABLE IF NOT EXISTS scan_job (
                     job_id INTEGER PRIMARY KEY,
                     roots_json TEXT NOT NULL,
@@ -238,8 +278,13 @@ impl ReportStore {
                     updated_at INTEGER NOT NULL DEFAULT 0
                 )",
                 [],
-            );
+            )?;
             conn.execute_batch("PRAGMA user_version = 2;")?;
+        }
+
+        if version < 3 {
+            alter_ignore_duplicate(&conn, "ALTER TABLE file_report ADD COLUMN cutoff_kind TEXT")?;
+            conn.execute_batch("PRAGMA user_version = 3;")?;
         }
 
         Ok(())
@@ -252,6 +297,7 @@ impl ReportStore {
         let spectrum_json = serde_json::to_string(&report.average_spectrum_db).unwrap_or_default();
         let verdict_str = format!("{:?}", report.verdict);
         let codec_type_str = format!("{:?}", report.facts.codec_type);
+        let cutoff_kind_str = report.cutoff_kind.map(|k| format!("{:?}", k));
 
         let (mtime_utc, blake3_hash) = match std::fs::File::open(&report.path) {
             Ok(mut file) => {
@@ -277,12 +323,12 @@ impl ReportStore {
                 path, file_size, engine_rev, mtime_utc, blake3_hash, container, codec, codec_type, sample_rate,
                 bit_depth, channels, duration_ms, container_bitrate_kbps,
                 is_lossless_declared, verdict, confidence, score_llr,
-                effective_bandwidth_hz, cutoff_slope_db_oct, true_peak_dbtp,
+                effective_bandwidth_hz, cutoff_slope_db_oct, cutoff_kind, true_peak_dbtp,
                 lufs_integrated, clipped_samples, dc_offset, dynamic_range_db,
                 stereo_correlation, guards_json, evidences_json, verdict_summary, spectrum_json
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29
+                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30
             );
             ",
             params![
@@ -305,6 +351,7 @@ impl ReportStore {
                 report.score_llr,
                 report.effective_bandwidth_hz,
                 report.cutoff_slope_db_oct,
+                cutoff_kind_str,
                 report.quality.true_peak_dbtp,
                 report.quality.lufs_integrated,
                 report.quality.clipped_samples,
@@ -541,5 +588,165 @@ impl ReportStore {
         } else {
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bdja_core::types::{CutoffKind, Verdict, ENGINE_REV};
+
+    #[test]
+    fn test_fresh_database_has_version_3_and_works() {
+        let store = ReportStore::open_in_memory().expect("open in memory should succeed");
+        let conn = store.conn.lock();
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .expect("should query user_version");
+        assert_eq!(version, 3, "Nueva BD debe arrancar en user_version = 3");
+    }
+
+    #[test]
+    fn test_migration_from_v1_to_v3() {
+        // Simular una base antigua en v1 sin codec_type, spectrum_json, cutoff_kind, etc.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE file_report (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                file_size INTEGER NOT NULL,
+                engine_rev INTEGER NOT NULL,
+                container TEXT NOT NULL,
+                codec TEXT NOT NULL,
+                sample_rate INTEGER NOT NULL,
+                bit_depth INTEGER,
+                channels INTEGER NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                container_bitrate_kbps INTEGER,
+                is_lossless_declared INTEGER NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                score_llr REAL NOT NULL,
+                effective_bandwidth_hz INTEGER,
+                cutoff_slope_db_oct REAL,
+                true_peak_dbtp REAL,
+                lufs_integrated REAL,
+                clipped_samples INTEGER NOT NULL,
+                dc_offset REAL,
+                dynamic_range_db REAL,
+                stereo_correlation REAL,
+                guards_json TEXT NOT NULL,
+                evidences_json TEXT NOT NULL,
+                verdict_summary TEXT NOT NULL
+            );
+            PRAGMA user_version = 1;
+            ",
+        )
+        .unwrap();
+
+        let store = ReportStore {
+            conn: Mutex::new(conn),
+        };
+        store.init_schema().expect("Migration should succeed");
+
+        let conn = store.conn.lock();
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 3, "BD migrada debe estar en user_version = 3");
+    }
+
+    #[test]
+    fn test_engine_rev_cache_invalidation() {
+        let store = ReportStore::open_in_memory().unwrap();
+
+        // Reporte guardado con rev = 1
+        let mut rep = FileReport::empty();
+        rep.path = "/music/track1.flac".to_string();
+        rep.file_size = 1024;
+        rep.engine_rev = 1; // versión vieja
+        rep.verdict = Verdict::LosslessVerified;
+        rep.cutoff_kind = Some(CutoffKind::FullSpectrum);
+
+        store.save_report(&rep).unwrap();
+
+        // Al consultar la caché con ENGINE_REV actual (2), NO debe devolver la fila vieja
+        let cached = store
+            .get_cached_report("/music/track1.flac", 1024, 0, ENGINE_REV)
+            .unwrap();
+        assert!(
+            cached.is_none(),
+            "get_cached_report con ENGINE_REV = 2 no debe devolver una fila con engine_rev = 1"
+        );
+
+        // Si consultamos con 1, sí existe
+        let cached_v1 = store
+            .get_cached_report("/music/track1.flac", 1024, 0, 1)
+            .unwrap();
+        assert!(cached_v1.is_some(), "Fila con engine_rev = 1 existe");
+    }
+
+    #[test]
+    fn test_preexisting_unversioned_db_is_migrated_to_v3() {
+        // Base antigua con tabla file_report pero user_version = 0 (anterior al sistema de versiones)
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE file_report (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                file_size INTEGER NOT NULL,
+                engine_rev INTEGER NOT NULL,
+                container TEXT NOT NULL,
+                codec TEXT NOT NULL,
+                sample_rate INTEGER NOT NULL,
+                bit_depth INTEGER,
+                channels INTEGER NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                container_bitrate_kbps INTEGER,
+                is_lossless_declared INTEGER NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                score_llr REAL NOT NULL,
+                effective_bandwidth_hz INTEGER,
+                cutoff_slope_db_oct REAL,
+                true_peak_dbtp REAL,
+                lufs_integrated REAL,
+                clipped_samples INTEGER NOT NULL,
+                dc_offset REAL,
+                dynamic_range_db REAL,
+                stereo_correlation REAL,
+                guards_json TEXT NOT NULL,
+                evidences_json TEXT NOT NULL,
+                verdict_summary TEXT NOT NULL
+            );
+            PRAGMA user_version = 0;
+            ",
+        )
+        .unwrap();
+
+        let store = ReportStore {
+            conn: Mutex::new(conn),
+        };
+        store
+            .init_schema()
+            .expect("Migración de BD no versionada debe completarse sin error");
+
+        let conn = store.conn.lock();
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            version, 3,
+            "BD no versionada preexistente debe terminar en user_version = 3"
+        );
+
+        // Verificar que la columna cutoff_kind existe y se puede consultar
+        let test_col: Result<Option<String>, _> =
+            conn.query_row("SELECT cutoff_kind FROM file_report LIMIT 1", [], |r| {
+                r.get(0)
+            });
+        assert!(test_col.is_ok() || test_col.unwrap_err() == rusqlite::Error::QueryReturnedNoRows);
     }
 }

@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manual de Usuario · BDJ Studio Audio Analyzer</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --bg-abyssal: #050811;
+      --surface-card: #0B101E;
+      --surface-elevated: #131B30;
+      --border-subtle: #182238;
+      --electric-cyan: #00F2FE;
+      --accent-blue: #4FACFE;
+      --verdict-green: #10B981;
+      --verdict-red: #F43F5E;
+      --verdict-amber: #F59E0B;
+      --verdict-orange: #FB923C;
+    }
+    body {
+      background-color: var(--bg-abyssal);
+      color: #F8FAFC;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+    .badge-green {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.5);
+      color: #34D399;
+    }
+    .badge-red {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.5);
+      color: #FB7185;
+    }
+    .badge-amber {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.5);
+      color: #FBBF24;
+    }
+    .badge-orange {
+      background: rgba(251, 146, 60, 0.15);
+      border: 1px solid rgba(251, 146, 60, 0.5);
+      color: #FDBA74;
+    }
+    .callout-pin {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #00F2FE;
+      color: #050811;
+      font-weight: 900;
+      font-size: 11px;
+    }
+    @media print {
+      .no-print { display: none !important; }
+      body { background: white !important; color: black !important; }
+    }
+  </style>
+</head>
+<body class="p-4 md:p-8 max-w-6xl mx-auto antialiased selection:bg-cyan-500 selection:text-black">
+
+  <!-- TOP HEADER -->
+  <header class="flex flex-col md:flex-row items-center justify-between pb-6 border-b border-[#182238] gap-4">
+    <div class="flex items-center gap-4">
+      <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-[#00F2FE] to-[#4FACFE] p-0.5 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+        <div class="w-full h-full bg-[#050811] rounded-[10px] flex items-center justify-center">
+          <svg class="w-7 h-7 text-[#00F2FE]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
+          </svg>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-xl md:text-2xl font-black tracking-wider text-white">BDJ STUDIO <span class="text-[#00F2FE]">AUDIO ANALYZER</span></h1>
+          <span class="text-xs font-bold px-2 py-0.5 bg-cyan-950/60 text-[#00F2FE] border border-cyan-500/30 rounded-md">MANUAL V1.0</span>
+        </div>
+        <p class="text-xs md:text-sm text-slate-400">Verificación de veracidad y calidad real acústica · Modelo inspirado en Fakin' The Funk</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3 no-print">
+      <button onclick="window.print()" class="px-4 py-2 text-xs font-semibold rounded-lg bg-[#131B30] border border-[#182238] text-slate-300 hover:text-white hover:border-cyan-500 transition-colors flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+        Imprimir / Guardar PDF
+      </button>
+    </div>
+  </header>
+
+  <!-- CONCEPT CALLOUT: CALIDAD DECLARADA VS CALIDAD REAL -->
+  <section class="my-8 bg-gradient-to-r from-cyan-950/40 via-[#0B101E] to-[#0B101E] border border-cyan-500/30 rounded-2xl p-6 relative overflow-hidden">
+    <div class="flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center shrink-0">
+        <svg class="w-6 h-6 text-[#00F2FE]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+      </div>
+      <div>
+        <h2 class="text-base md:text-lg font-bold text-white mb-1.5">El Principio de Veracidad: Calidad Declarada vs. Calidad Real</h2>
+        <p class="text-sm text-slate-300 leading-relaxed mb-3">
+          El engaño en la música digital no solo ocurre con MP3 convertidos a WAV. Ocurre con <strong>cualquier archivo</strong>:
+        </p>
+        <ul class="text-xs md:text-sm text-slate-300 space-y-1.5 list-disc list-inside">
+          <li><strong>Falsos Lossless:</strong> Archivos WAV o FLAC que dicen ser 1411 kbps (estudio) pero en realidad fueron inflados desde un audio de 128 kbps.</li>
+          <li><strong>Falsos 320 kbps:</strong> Archivos MP3 que la etiqueta marca como "320 kbps HD", pero acústicamente tienen un corte en 16 kHz propio de un MP3 de 128 kbps.</li>
+          <li><strong>Archivos Legítimos:</strong> Un MP3 de 128 kbps o un WAV original cuya calidad acústica coincide exactamente con lo declarado.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 QUICK STEPS -->
+  <section class="my-8">
+    <h2 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-[#00F2FE]"></span>
+      Uso Rápido y Sencillo (Sin Complicaciones)
+    </h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="bg-[#0B101E] border border-[#182238] rounded-xl p-5">
+        <div class="w-8 h-8 rounded-full bg-cyan-500/20 text-[#00F2FE] flex items-center justify-center font-black text-sm mb-3">1</div>
+        <h3 class="font-bold text-white mb-1">Carga tu Música</h3>
+        <p class="text-xs text-slate-400 leading-relaxed">
+          Usa los botones superiores <strong>[Agregar Archivos]</strong> o <strong>[Agregar Carpeta]</strong>, o simplemente arrastra tus canciones al centro.
+        </p>
+      </div>
+      <div class="bg-[#0B101E] border border-[#182238] rounded-xl p-5">
+        <div class="w-8 h-8 rounded-full bg-cyan-500/20 text-[#00F2FE] flex items-center justify-center font-black text-sm mb-3">2</div>
+        <h3 class="font-bold text-white mb-1">Análisis Espectral</h3>
+        <p class="text-xs text-slate-400 leading-relaxed">
+          El motor nativo examina el corte de frecuencias (kHz) y la densidad de energía de cada archivo (100% offline).
+        </p>
+      </div>
+      <div class="bg-[#0B101E] border border-[#182238] rounded-xl p-5">
+        <div class="w-8 h-8 rounded-full bg-cyan-500/20 text-[#00F2FE] flex items-center justify-center font-black text-sm mb-3">3</div>
+        <h3 class="font-bold text-white mb-1">Verifica la Veracidad</h3>
+        <p class="text-xs text-slate-400 leading-relaxed">
+          Compara la columna <strong>Calidad Declarada</strong> contra <strong>Calidad Real Detectada</strong>. El semáforo te alertará de cualquier engaño.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- INTERFAZ 1: PANTALLA PRINCIPAL SIN REDUNDANCIAS -->
+  <section class="my-12">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-bold text-white flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-[#00F2FE]"></span>
+        1. Pantalla Principal Limpia (Sin Duplicidades)
+      </h2>
+      <span class="text-xs text-slate-400 bg-[#131B30] px-3 py-1 rounded-full border border-[#182238]">Interfaz Unificada</span>
+    </div>
+
+    <!-- UI Mockup Container -->
+    <div class="bg-[#0B101E] border-2 border-[#182238] rounded-2xl overflow-hidden shadow-2xl">
+      <!-- Window Title Bar & Unified Actions -->
+      <div class="bg-[#131B30] px-4 py-2.5 border-b border-[#182238] flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-1.5">
+            <div class="w-3 h-3 rounded-full bg-rose-500/80"></div>
+            <div class="w-3 h-3 rounded-full bg-amber-500/80"></div>
+            <div class="w-3 h-3 rounded-full bg-emerald-500/80"></div>
+          </div>
+          <span class="text-xs font-black tracking-wider text-white">BDJ STUDIO <span class="text-cyan-400">ANALYZER</span></span>
+        </div>
+
+        <!-- UNIFIED TOP ACTION BUTTONS -->
+        <div class="flex items-center gap-2">
+          <button class="px-3 py-1.5 bg-[#00F2FE] text-black text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-sm">
+            🎵 Agregar Archivos
+          </button>
+          <button class="px-3 py-1.5 bg-[#0B101E] border border-[#182238] text-white text-xs font-bold rounded-lg flex items-center gap-1.5">
+            📁 Agregar Carpeta
+          </button>
+          <button class="px-3 py-1.5 bg-cyan-950/60 border border-cyan-400 text-cyan-300 text-xs font-bold rounded-lg flex items-center gap-1.5">
+            ⚡ Escanear USB (D:)
+          </button>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] text-cyan-400 border border-cyan-500/40 bg-cyan-950/30 px-2 py-1 rounded-md font-bold">📖 Manual</span>
+          <span class="text-[10px] text-emerald-400 border border-emerald-500/40 bg-emerald-950/30 px-2 py-1 rounded-md font-bold">100% Offline</span>
+        </div>
+      </div>
+
+      <!-- App Body Layout -->
+      <div class="grid grid-cols-1 md:grid-cols-4 min-h-[340px]">
+        <!-- Left Sidebar: Disks & Speed ONLY -->
+        <div class="bg-[#0B101E] border-r border-[#182238] p-4 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-[11px] font-bold tracking-wider text-slate-400 flex items-center gap-1.5">
+                <span class="callout-pin">1</span> DISCOS Y MEMORIAS
+              </span>
+              <span class="text-xs text-cyan-400 cursor-pointer">🔄</span>
+            </div>
+
+            <!-- Volume Item: USB -->
+            <div class="p-2.5 rounded-lg bg-cyan-950/20 border border-cyan-500/40 mb-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-white">🔌 D: (USB_DJ_MUSIC)</span>
+                <span class="text-[9px] bg-cyan-500 text-black font-extrabold px-1 rounded">USB</span>
+              </div>
+              <div class="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                <div class="bg-[#00F2FE] h-full w-[45%]"></div>
+              </div>
+              <div class="flex justify-between items-center mt-1.5 text-[10px]">
+                <span class="text-slate-400">14.2 GB libres</span>
+                <span class="text-cyan-400 font-bold hover:underline cursor-pointer">Escanear</span>
+              </div>
+            </div>
+
+            <!-- Volume Item: Local Disk -->
+            <div class="p-2.5 rounded-lg bg-[#131B30] border border-[#182238]">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-slate-300">💻 C: (Disco Local)</span>
+              </div>
+              <div class="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                <div class="bg-slate-500 h-full w-[70%]"></div>
+              </div>
+              <div class="flex justify-between items-center mt-1.5 text-[10px]">
+                <span class="text-slate-400">120 GB libres</span>
+                <span class="text-slate-400 font-semibold cursor-pointer">Escanear</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom: Speed selector ONLY (no redundant buttons) -->
+          <div class="pt-4 border-t border-[#182238]">
+            <span class="text-[10px] font-bold text-slate-400 block mb-1.5 flex items-center gap-1.5">
+              <span class="callout-pin">2</span> VELOCIDAD DE ANÁLISIS
+            </span>
+            <div class="grid grid-cols-3 gap-1">
+              <div class="text-center py-1.5 rounded bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-[10px] font-bold">⚡ Rápido</div>
+              <div class="text-center py-1.5 rounded bg-[#131B30] text-slate-400 text-[10px]">Equilibrado</div>
+              <div class="text-center py-1.5 rounded bg-[#131B30] text-slate-400 text-[10px]">Silencioso</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center Dropzone Mockup (Clean & Clickable) -->
+        <div class="md:col-span-3 p-6 flex flex-col items-center justify-center bg-[#050811]">
+          <div class="w-full max-w-lg border-2 border-dashed border-cyan-500/30 rounded-2xl p-8 text-center bg-[#0B101E]/60 flex flex-col items-center cursor-pointer hover:border-cyan-400 transition-colors">
+            
+            <!-- Cloud Upload Icon -->
+            <div class="w-16 h-16 rounded-full bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center mb-4">
+              <svg class="w-8 h-8 text-[#00F2FE]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+            </div>
+
+            <div class="flex items-center gap-2 mb-1">
+              <span class="callout-pin">3</span>
+              <h3 class="text-base font-bold text-white">Arrastra y suelta aquí tus canciones o carpetas</h3>
+            </div>
+            <p class="text-xs text-slate-400 mb-4 max-w-sm">
+              Analiza la calidad real de cualquier formato de audio.<br>Detecta pistas de baja fidelidad o archivos inflados a WAV/FLAC.
+            </p>
+
+            <div class="px-3.5 py-1.5 bg-[#131B30] border border-[#182238] rounded-full text-xs text-slate-300 flex items-center gap-1.5">
+              <span>👆</span> Haz clic aquí o usa los botones superiores para examinar
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Callouts legend -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 text-xs text-slate-300">
+      <div class="flex gap-2.5 items-start">
+        <span class="callout-pin shrink-0">1</span>
+        <div><strong>Discos y Memorias:</strong> Lista de tus unidades para escanear con un solo clic.</div>
+      </div>
+      <div class="flex gap-2.5 items-start">
+        <span class="callout-pin shrink-0">2</span>
+        <div><strong>Velocidad:</strong> Controla el uso de procesador (Rápido / Equilibrado / Silencioso).</div>
+      </div>
+      <div class="flex gap-2.5 items-start">
+        <span class="callout-pin shrink-0">3</span>
+        <div><strong>Área de Arrastre:</strong> Cero botones duplicados. Puedes soltar archivos o hacer clic en cualquier parte.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INTERFAZ 2: TABLA DE RESULTADOS ESTILO FAKIN' THE FUNK -->
+  <section class="my-12">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-bold text-white flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-[#00F2FE]"></span>
+        2. Tabla de Resultados (Calidad Declarada vs. Real)
+      </h2>
+      <span class="text-xs text-slate-400 bg-[#131B30] px-3 py-1 rounded-full border border-[#182238]">Análisis Comparativo</span>
+    </div>
+
+    <!-- UI Mockup Container -->
+    <div class="bg-[#0B101E] border-2 border-[#182238] rounded-2xl overflow-hidden shadow-2xl p-5">
+      
+      <!-- Top Summary Cards -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 mb-5">
+        <div class="bg-[#131B30] border border-[#182238] rounded-xl p-3">
+          <div class="text-[10px] font-bold text-slate-400">TOTAL</div>
+          <div class="text-xl font-black text-white mt-1">24</div>
+        </div>
+        <div class="bg-[#131B30] border border-emerald-500/30 rounded-xl p-3">
+          <div class="text-[10px] font-bold text-emerald-400">CALIDAD REAL</div>
+          <div class="text-xl font-black text-emerald-400 mt-1">18</div>
+        </div>
+        <div class="bg-[#131B30] border border-rose-500/40 rounded-xl p-3 bg-rose-950/10">
+          <div class="text-[10px] font-bold text-rose-400">FALSO / INFLADO</div>
+          <div class="text-xl font-black text-rose-400 mt-1">4</div>
+        </div>
+        <div class="bg-[#131B30] border border-orange-500/30 rounded-xl p-3">
+          <div class="text-[10px] font-bold text-orange-400">SOSPECHOSAS</div>
+          <div class="text-xl font-black text-orange-400 mt-1">1</div>
+        </div>
+        <div class="bg-[#131B30] border border-amber-500/30 rounded-xl p-3">
+          <div class="text-[10px] font-bold text-amber-400">NO CONCLUYENTE</div>
+          <div class="text-xl font-black text-amber-400 mt-1">1</div>
+        </div>
+        <div class="bg-[#131B30] border border-slate-700 rounded-xl p-3">
+          <div class="text-[10px] font-bold text-slate-400">MP3 ESTÁNDAR</div>
+          <div class="text-xl font-black text-slate-300 mt-1">0</div>
+        </div>
+      </div>
+
+      <!-- Table Rows Mockup (Exact Fakin The Funk Columns con Selección Múltiple) -->
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr class="bg-[#131B30] text-slate-400 font-bold border-b border-[#182238]">
+              <th class="p-3 w-10 text-center">
+                <input type="checkbox" checked class="rounded bg-slate-900 border-slate-700 text-cyan-400 focus:ring-0">
+              </th>
+              <th class="p-3">ESTADO / VERACIDAD</th>
+              <th class="p-3">PISTA / ARCHIVO</th>
+              <th class="p-3">CALIDAD DECLARADA</th>
+              <th class="p-3">CALIDAD REAL DETECTADA</th>
+              <th class="p-3">CORTE FREC.</th>
+              <th class="p-3 text-center">ACCIONES</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#182238]">
+            <!-- Example 1: Real Lossless -->
+            <tr class="hover:bg-[#131B30]/50">
+              <td class="p-3 text-center">
+                <input type="checkbox" class="rounded bg-slate-900 border-slate-700 text-cyan-400">
+              </td>
+              <td class="p-3">
+                <span class="badge-green px-2.5 py-1 rounded-md font-bold flex items-center gap-1 w-max">
+                  ✓ Genuino (Real)
+                </span>
+              </td>
+              <td class="p-3">
+                <div class="font-bold text-white">01 - Bad Bunny - Tití Me Preguntó.wav</div>
+                <div class="text-[10px] text-slate-400">3:42 min · 42.1 MB</div>
+              </td>
+              <td class="p-3 text-slate-300">WAV (Lossless · 16b / 44.1 kHz)</td>
+              <td class="p-3 font-bold text-emerald-400">Lossless Real (Estudio/CD)</td>
+              <td class="p-3 font-mono font-bold text-cyan-400">> 20.5 kHz (Total)</td>
+              <td class="p-3 text-center text-cyan-400 font-bold">🔍 · 📁 · <span class="text-rose-400">🗑️</span></td>
+            </tr>
+
+            <!-- Example 2: Falso Lossless (WAV inflado desde MP3 128k) -->
+            <tr class="hover:bg-rose-950/20 bg-rose-950/10">
+              <td class="p-3 text-center">
+                <input type="checkbox" checked class="rounded bg-slate-900 border-slate-700 text-cyan-400">
+              </td>
+              <td class="p-3">
+                <span class="badge-red px-2.5 py-1 rounded-md font-black flex items-center gap-1 w-max animate-pulse">
+                  ⚠️ Falso Lossless
+                </span>
+              </td>
+              <td class="p-3">
+                <div class="font-bold text-white">02 - Karol G - Provenza (Club Mix).wav</div>
+                <div class="text-[10px] text-rose-400 font-semibold">3:30 min · 39.5 MB</div>
+              </td>
+              <td class="p-3 text-slate-300">WAV (Lossless · 16b / 44.1 kHz)</td>
+              <td class="p-3 font-black text-rose-400">Calidad ~128 kbps (Baja)</td>
+              <td class="p-3 font-mono font-bold text-rose-400">16.0 kHz</td>
+              <td class="p-3 text-center text-cyan-400 font-bold">🔍 · 📁 · <span class="text-rose-400">🗑️</span></td>
+            </tr>
+
+            <!-- Example 3: Falso 320k (MP3 inflado desde 128k) -->
+            <tr class="hover:bg-rose-950/20 bg-rose-950/10">
+              <td class="p-3 text-center">
+                <input type="checkbox" checked class="rounded bg-slate-900 border-slate-700 text-cyan-400">
+              </td>
+              <td class="p-3">
+                <span class="badge-red px-2.5 py-1 rounded-md font-black flex items-center gap-1 w-max">
+                  ⚠️ Falso 320k
+                </span>
+              </td>
+              <td class="p-3">
+                <div class="font-bold text-white">03 - Reggaeton Hit 2026.mp3</div>
+                <div class="text-[10px] text-rose-400 font-semibold">2:50 min · 7.2 MB</div>
+              </td>
+              <td class="p-3 text-slate-300">MP3 320 kbps</td>
+              <td class="p-3 font-black text-rose-400">Calidad ~128 kbps (Baja)</td>
+              <td class="p-3 font-mono font-bold text-rose-400">16.0 kHz</td>
+              <td class="p-3 text-center text-cyan-400 font-bold">🔍 · 📁 · <span class="text-rose-400">🗑️</span></td>
+            </tr>
+
+            <!-- Example 4: MP3 Legítimo que coincide -->
+            <tr class="hover:bg-[#131B30]/50">
+              <td class="p-3 text-center">
+                <input type="checkbox" class="rounded bg-slate-900 border-slate-700 text-cyan-400">
+              </td>
+              <td class="p-3">
+                <span class="bg-slate-800 text-slate-300 border border-slate-700 px-2.5 py-1 rounded-md font-bold flex items-center gap-1 w-max">
+                  ✓ Coincide
+                </span>
+              </td>
+              <td class="p-3">
+                <div class="font-bold text-white">04 - Podcast Entrevista.mp3</div>
+                <div class="text-[10px] text-slate-400">15:20 min · 14.1 MB</div>
+              </td>
+              <td class="p-3 text-slate-300">MP3 128 kbps</td>
+              <td class="p-3 text-slate-300">Real ~128 kbps</td>
+              <td class="p-3 font-mono text-slate-400">16.0 kHz</td>
+              <td class="p-3 text-center text-cyan-400 font-bold">🔍 · 📁 · <span class="text-rose-400">🗑️</span></td>
+            </tr>
+
+            <!-- Example 5: No Concluyente / Indeterminado -->
+            <tr class="hover:bg-[#131B30]/50">
+              <td class="p-3 text-center">
+                <input type="checkbox" class="rounded bg-slate-900 border-slate-700 text-cyan-400">
+              </td>
+              <td class="p-3">
+                <span class="badge-amber px-2.5 py-1 rounded-md font-bold flex items-center gap-1 w-max">
+                  ❓ No Concluyente
+                </span>
+              </td>
+              <td class="p-3">
+                <div class="font-bold text-white">05 - Héctor Lavoe - Periódico de Ayer.flac</div>
+                <div class="text-[10px] text-slate-400">4:15 min · 28.3 MB</div>
+              </td>
+              <td class="p-3 text-slate-300">FLAC (Lossless · 16b / 44.1 kHz)</td>
+              <td class="p-3 text-amber-400 font-bold">Indeterminado (Suave)</td>
+              <td class="p-3 font-mono text-amber-400">17.8 kHz (Roll-off)</td>
+              <td class="p-3 text-center text-cyan-400 font-bold">🔍 · 📁 · <span class="text-rose-400">🗑️</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Barra Flotante de Acciones en Lote (Mockup) -->
+      <div class="mt-4 p-3 bg-[#131B30] border border-cyan-500/40 rounded-xl flex flex-wrap items-center justify-between gap-3 shadow-lg">
+        <div class="flex items-center gap-2 text-xs font-bold text-white">
+          <span class="w-5 h-5 rounded-full bg-cyan-400/20 text-cyan-400 flex items-center justify-center text-[10px]">2</span>
+          <span>canciones seleccionadas</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="px-3 py-1.5 bg-[#0B101E] border border-cyan-500/40 text-cyan-400 rounded-lg text-xs font-semibold hover:bg-cyan-950/40 transition-colors flex items-center gap-1.5">
+            📦 Mover a Carpeta...
+          </button>
+          <button class="px-3 py-1.5 bg-[#0B101E] border border-amber-500/40 text-amber-400 rounded-lg text-xs font-semibold hover:bg-amber-950/40 transition-colors flex items-center gap-1.5">
+            🏷️ Renombrar con Calidad
+          </button>
+          <button class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-rose-950/50">
+            🗑️ Eliminar del Disco
+      </div>
+    </div>
+  </section>
+
+  <!-- TABLA COMPARATIVA DE CORTES DE FRECUENCIA -->
+  <section class="my-12">
+    <h2 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-[#00F2FE]"></span>
+      Tabla de Referencia Rápida: Cortes de Frecuencia (kHz)
+    </h2>
+    <div class="bg-[#0B101E] border border-[#182238] rounded-2xl overflow-hidden p-5">
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+        <div class="bg-[#131B30] p-4 rounded-xl border border-emerald-500/30">
+          <div class="text-emerald-400 font-black text-sm mb-1">> 20.0 kHz</div>
+          <strong class="text-white block mb-1">Lossless / Estudio Real</strong>
+          <p class="text-slate-400">Espectro completo. Típico de másters originales en CD, WAV y FLAC sin compresión destructiva.</p>
+        </div>
+        <div class="bg-[#131B30] p-4 rounded-xl border border-cyan-500/30">
+          <div class="text-cyan-400 font-black text-sm mb-1">~19.0 - 19.5 kHz</div>
+          <strong class="text-white block mb-1">MP3 320 kbps Real</strong>
+          <p class="text-slate-400">Corte suave de filtros psicoacústicos LAME a 320 kbps. Máxima calidad en formato MP3.</p>
+        </div>
+        <div class="bg-[#131B30] p-4 rounded-xl border border-amber-500/30">
+          <div class="text-amber-400 font-black text-sm mb-1">~18.0 - 18.5 kHz</div>
+          <strong class="text-white block mb-1">MP3 192 - 256 kbps</strong>
+          <p class="text-slate-400">Calidad media típica de compras estándar en tiendas digitales o radios online.</p>
+        </div>
+        <div class="bg-[#131B30] p-4 rounded-xl border border-rose-500/40 bg-rose-950/10">
+          <div class="text-rose-400 font-black text-sm mb-1">~15.5 - 16.0 kHz</div>
+          <strong class="text-rose-400 block mb-1">MP3 128 kbps (Baja Calidad)</strong>
+          <p class="text-slate-300">Corte vertical tipo guillotina. Si un WAV o MP3 320k corta aquí, es un <strong>engaño artificial</strong>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ / PREGUNTAS FRECUENTES -->
+  <section class="my-12">
+    <h2 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-[#00F2FE]"></span>
+      Preguntas Frecuentes
+    </h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-[#0B101E] border border-[#182238] rounded-xl p-4">
+        <h4 class="font-bold text-white text-xs mb-1.5">¿Qué hago si compré música y sale en rojo (Falso / Inflado)?</h4>
+        <p class="text-xs text-slate-400 leading-relaxed">
+          Puedes usar el botón <strong>📊 CSV</strong> para descargar un informe en Excel con el análisis forense y reclamar la devolución de tu dinero al vendedor.
+        </p>
+      </div>
+      <div class="bg-[#0B101E] border border-[#182238] rounded-xl p-4">
+        <h4 class="font-bold text-white text-xs mb-1.5">¿Por qué una canción antigua en WAV corta en 17 kHz pero sale en amarillo?</h4>
+        <p class="text-xs text-slate-400 leading-relaxed">
+          Las grabaciones de los años 70 y 80 en cinta magnética o vinilo no tenían frecuencias ultra agudas artificiales. El motor reconoce que es un declive suave natural y no un corte digital de MP3.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="mt-12 pt-6 border-t border-[#182238] text-center text-xs text-slate-500 pb-8">
+    <p class="font-semibold text-slate-400">BDJ STUDIO AUDIO ANALYZER · Edición Profesional</p>
+    <p class="mt-1">Verificación forense de calidad de audio digital · 100% Offline</p>
+  </footer>
+
+</body>
+</html>

@@ -93,6 +93,13 @@ pub struct EvidenceFfi {
     pub description: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CutoffKindFfi {
+    BrickwallCutoff,
+    FullSpectrum,
+    NaturalRolloff,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileReportFfi {
     pub file_id: i64,
@@ -106,6 +113,7 @@ pub struct FileReportFfi {
     pub score_llr: f64,
     pub effective_bandwidth_hz: Option<u32>,
     pub cutoff_slope_db_oct: Option<f64>,
+    pub cutoff_kind: Option<CutoffKindFfi>,
     pub evidences: Vec<EvidenceFfi>,
     pub quality: QualityMetricsFfi,
     pub guards_triggered: Vec<String>,
@@ -139,6 +147,11 @@ fn map_report_to_ffi(report: FileReport) -> FileReportFfi {
         score_llr: report.score_llr,
         effective_bandwidth_hz: report.effective_bandwidth_hz,
         cutoff_slope_db_oct: report.cutoff_slope_db_oct,
+        cutoff_kind: report.cutoff_kind.map(|k| match k {
+            bdja_core::types::CutoffKind::BrickwallCutoff => CutoffKindFfi::BrickwallCutoff,
+            bdja_core::types::CutoffKind::FullSpectrum => CutoffKindFfi::FullSpectrum,
+            bdja_core::types::CutoffKind::NaturalRolloff => CutoffKindFfi::NaturalRolloff,
+        }),
         evidences: report
             .evidences
             .into_iter()
@@ -428,7 +441,11 @@ pub fn engine_init(capability_token: String, data_dir: String) -> Result<EngineI
     let mut dir = DATA_DIR.write();
     let mut store_lock = STORE.write();
 
-    let db_path = Path::new(&data_dir).join("bdj_audio_analyzer.db");
+    let db_path = Path::new(&data_dir).join("audio_analyzer.db");
+    let legacy_db_path = Path::new(&data_dir).join("bdj_audio_analyzer.db");
+    if !db_path.exists() && legacy_db_path.exists() {
+        let _ = std::fs::rename(&legacy_db_path, &db_path);
+    }
     let store = ReportStore::open(&db_path)
         .map_err(|e| format!("Error abriendo base de datos en {:?}: {}", db_path, e))?;
     *store_lock = Some(Arc::new(store));

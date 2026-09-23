@@ -67,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1495887897;
+  int get rustContentHash => 1562080518;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -110,6 +110,8 @@ abstract class RustLibApi extends BaseApi {
   Future<bool> crateApiExportReportsCsv({required String outPath});
 
   Future<bool> crateApiExportReportsJson({required String outPath});
+
+  Future<List<String>> crateApiGetOrDeriveHwidCandidates();
 
   Future<List<VolumeInfoFfi>> crateApiListSystemVolumes();
 
@@ -495,7 +497,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
-  Future<List<VolumeInfoFfi>> crateApiListSystemVolumes() {
+  Future<List<String>> crateApiGetOrDeriveHwidCandidates() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -504,6 +506,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             generalizedFrbRustBinding,
             serializer,
             funcId: 13,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetOrDeriveHwidCandidatesConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetOrDeriveHwidCandidatesConstMeta =>
+      const TaskConstMeta(
+        debugName: "get_or_derive_hwid_candidates",
+        argNames: [],
+      );
+
+  @override
+  Future<List<VolumeInfoFfi>> crateApiListSystemVolumes() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
             port: port_,
           );
         },
@@ -531,7 +563,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 15,
             port: port_,
           );
         },
@@ -561,7 +593,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 16,
             port: port_,
           );
         },
@@ -600,7 +632,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 17,
             port: port_,
           );
         },
@@ -634,7 +666,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 18,
             port: port_,
           );
         },
@@ -670,7 +702,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 19,
             port: port_,
           );
         },
@@ -703,6 +735,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CutoffKindFfi dco_decode_box_autoadd_cutoff_kind_ffi(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_cutoff_kind_ffi(raw);
+  }
+
+  @protected
   double dco_decode_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
@@ -718,6 +756,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   int dco_decode_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
+  }
+
+  @protected
+  CutoffKindFfi dco_decode_cutoff_kind_ffi(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return CutoffKindFfi.values[raw as int];
   }
 
   @protected
@@ -778,8 +822,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FileReportFfi dco_decode_file_report_ffi(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 16)
-      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
+    if (arr.length != 17)
+      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
     return FileReportFfi(
       fileId: dco_decode_i_64(arr[0]),
       path: dco_decode_String(arr[1]),
@@ -792,11 +836,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       scoreLlr: dco_decode_f_64(arr[8]),
       effectiveBandwidthHz: dco_decode_opt_box_autoadd_u_32(arr[9]),
       cutoffSlopeDbOct: dco_decode_opt_box_autoadd_f_64(arr[10]),
-      evidences: dco_decode_list_evidence_ffi(arr[11]),
-      quality: dco_decode_quality_metrics_ffi(arr[12]),
-      guardsTriggered: dco_decode_list_String(arr[13]),
-      verdictSummary: dco_decode_String(arr[14]),
-      spectrumDb: dco_decode_list_prim_f_32_strict(arr[15]),
+      cutoffKind: dco_decode_opt_box_autoadd_cutoff_kind_ffi(arr[11]),
+      evidences: dco_decode_list_evidence_ffi(arr[12]),
+      quality: dco_decode_quality_metrics_ffi(arr[13]),
+      guardsTriggered: dco_decode_list_String(arr[14]),
+      verdictSummary: dco_decode_String(arr[15]),
+      spectrumDb: dco_decode_list_prim_f_32_strict(arr[16]),
     );
   }
 
@@ -816,6 +861,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       containerBitrateKbps: dco_decode_opt_box_autoadd_u_32(arr[6]),
       isLosslessDeclared: dco_decode_bool(arr[7]),
     );
+  }
+
+  @protected
+  int dco_decode_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -870,6 +921,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  CutoffKindFfi? dco_decode_opt_box_autoadd_cutoff_kind_ffi(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_cutoff_kind_ffi(raw);
   }
 
   @protected
@@ -985,6 +1042,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CutoffKindFfi sse_decode_box_autoadd_cutoff_kind_ffi(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_cutoff_kind_ffi(deserializer));
+  }
+
+  @protected
   double sse_decode_box_autoadd_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_f_64(deserializer));
@@ -1000,6 +1065,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_u_32(deserializer));
+  }
+
+  @protected
+  CutoffKindFfi sse_decode_cutoff_kind_ffi(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return CutoffKindFfi.values[inner];
   }
 
   @protected
@@ -1077,6 +1149,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deserializer,
     );
     var var_cutoffSlopeDbOct = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_cutoffKind = sse_decode_opt_box_autoadd_cutoff_kind_ffi(
+      deserializer,
+    );
     var var_evidences = sse_decode_list_evidence_ffi(deserializer);
     var var_quality = sse_decode_quality_metrics_ffi(deserializer);
     var var_guardsTriggered = sse_decode_list_String(deserializer);
@@ -1094,6 +1169,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       scoreLlr: var_scoreLlr,
       effectiveBandwidthHz: var_effectiveBandwidthHz,
       cutoffSlopeDbOct: var_cutoffSlopeDbOct,
+      cutoffKind: var_cutoffKind,
       evidences: var_evidences,
       quality: var_quality,
       guardsTriggered: var_guardsTriggered,
@@ -1125,6 +1201,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       containerBitrateKbps: var_containerBitrateKbps,
       isLosslessDeclared: var_isLosslessDeclared,
     );
+  }
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getInt32();
   }
 
   @protected
@@ -1219,6 +1301,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  CutoffKindFfi? sse_decode_opt_box_autoadd_cutoff_kind_ffi(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_cutoff_kind_ffi(deserializer));
     } else {
       return null;
     }
@@ -1354,12 +1449,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  int sse_decode_i_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getInt32();
-  }
-
-  @protected
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
@@ -1369,6 +1458,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_cutoff_kind_ffi(
+    CutoffKindFfi self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_cutoff_kind_ffi(self, serializer);
   }
 
   @protected
@@ -1387,6 +1485,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_32(self, serializer);
+  }
+
+  @protected
+  void sse_encode_cutoff_kind_ffi(
+    CutoffKindFfi self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -1451,6 +1558,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_f_64(self.scoreLlr, serializer);
     sse_encode_opt_box_autoadd_u_32(self.effectiveBandwidthHz, serializer);
     sse_encode_opt_box_autoadd_f_64(self.cutoffSlopeDbOct, serializer);
+    sse_encode_opt_box_autoadd_cutoff_kind_ffi(self.cutoffKind, serializer);
     sse_encode_list_evidence_ffi(self.evidences, serializer);
     sse_encode_quality_metrics_ffi(self.quality, serializer);
     sse_encode_list_String(self.guardsTriggered, serializer);
@@ -1472,6 +1580,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_64(self.durationMs, serializer);
     sse_encode_opt_box_autoadd_u_32(self.containerBitrateKbps, serializer);
     sse_encode_bool(self.isLosslessDeclared, serializer);
+  }
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putInt32(self);
   }
 
   @protected
@@ -1564,6 +1678,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_cutoff_kind_ffi(
+    CutoffKindFfi? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_cutoff_kind_ffi(self, serializer);
     }
   }
 
@@ -1669,11 +1796,5 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.isReady, serializer);
     sse_encode_u_64(self.totalBytes, serializer);
     sse_encode_u_64(self.freeBytes, serializer);
-  }
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
   }
 }

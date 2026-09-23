@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1495887897;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1562080518;
 
 // Section: executor
 
@@ -439,6 +439,38 @@ fn wire__crate__api__export_reports_json_impl(
         },
     )
 }
+fn wire__crate__api__get_or_derive_hwid_candidates_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "get_or_derive_hwid_candidates",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::get_or_derive_hwid_candidates())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__list_system_volumes_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -666,6 +698,19 @@ impl SseDecode for bool {
     }
 }
 
+impl SseDecode for crate::api::CutoffKindFfi {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::CutoffKindFfi::BrickwallCutoff,
+            1 => crate::api::CutoffKindFfi::FullSpectrum,
+            2 => crate::api::CutoffKindFfi::NaturalRolloff,
+            _ => unreachable!("Invalid variant for CutoffKindFfi: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::DuplicateGroupFfi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -742,6 +787,7 @@ impl SseDecode for crate::api::FileReportFfi {
         let mut var_scoreLlr = <f64>::sse_decode(deserializer);
         let mut var_effectiveBandwidthHz = <Option<u32>>::sse_decode(deserializer);
         let mut var_cutoffSlopeDbOct = <Option<f64>>::sse_decode(deserializer);
+        let mut var_cutoffKind = <Option<crate::api::CutoffKindFfi>>::sse_decode(deserializer);
         let mut var_evidences = <Vec<crate::api::EvidenceFfi>>::sse_decode(deserializer);
         let mut var_quality = <crate::api::QualityMetricsFfi>::sse_decode(deserializer);
         let mut var_guardsTriggered = <Vec<String>>::sse_decode(deserializer);
@@ -759,6 +805,7 @@ impl SseDecode for crate::api::FileReportFfi {
             score_llr: var_scoreLlr,
             effective_bandwidth_hz: var_effectiveBandwidthHz,
             cutoff_slope_db_oct: var_cutoffSlopeDbOct,
+            cutoff_kind: var_cutoffKind,
             evidences: var_evidences,
             quality: var_quality,
             guards_triggered: var_guardsTriggered,
@@ -789,6 +836,13 @@ impl SseDecode for crate::api::FormatFactsFfi {
             container_bitrate_kbps: var_containerBitrateKbps,
             is_lossless_declared: var_isLosslessDeclared,
         };
+    }
+}
+
+impl SseDecode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
     }
 }
 
@@ -888,6 +942,17 @@ impl SseDecode for Option<String> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<String>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::CutoffKindFfi> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::CutoffKindFfi>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -1026,13 +1091,6 @@ impl SseDecode for crate::api::VolumeInfoFfi {
     }
 }
 
-impl SseDecode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
-    }
-}
-
 fn pde_ffi_dispatcher_primary_impl(
     func_id: i32,
     port: flutter_rust_bridge::for_generated::MessagePort,
@@ -1055,12 +1113,15 @@ fn pde_ffi_dispatcher_primary_impl(
         9 => wire__crate__api__engine_init_impl(port, ptr, rust_vec_len, data_len),
         11 => wire__crate__api__export_reports_csv_impl(port, ptr, rust_vec_len, data_len),
         12 => wire__crate__api__export_reports_json_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__list_system_volumes_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__poll_scan_job_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__query_duplicate_groups_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__query_saved_reports_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__scan_directory_audio_impl(port, ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__start_scan_job_impl(port, ptr, rust_vec_len, data_len),
+        13 => {
+            wire__crate__api__get_or_derive_hwid_candidates_impl(port, ptr, rust_vec_len, data_len)
+        }
+        14 => wire__crate__api__list_system_volumes_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__poll_scan_job_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__query_duplicate_groups_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__query_saved_reports_impl(port, ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__scan_directory_audio_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__start_scan_job_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1080,6 +1141,23 @@ fn pde_ffi_dispatcher_sync_impl(
 
 // Section: rust2dart
 
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::CutoffKindFfi {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::BrickwallCutoff => 0.into_dart(),
+            Self::FullSpectrum => 1.into_dart(),
+            Self::NaturalRolloff => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::CutoffKindFfi {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::CutoffKindFfi> for crate::api::CutoffKindFfi {
+    fn into_into_dart(self) -> crate::api::CutoffKindFfi {
+        self
+    }
+}
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::DuplicateGroupFfi {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
@@ -1151,6 +1229,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::FileReportFfi {
             self.score_llr.into_into_dart().into_dart(),
             self.effective_bandwidth_hz.into_into_dart().into_dart(),
             self.cutoff_slope_db_oct.into_into_dart().into_dart(),
+            self.cutoff_kind.into_into_dart().into_dart(),
             self.evidences.into_into_dart().into_dart(),
             self.quality.into_into_dart().into_dart(),
             self.guards_triggered.into_into_dart().into_dart(),
@@ -1270,6 +1349,23 @@ impl SseEncode for bool {
     }
 }
 
+impl SseEncode for crate::api::CutoffKindFfi {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::CutoffKindFfi::BrickwallCutoff => 0,
+                crate::api::CutoffKindFfi::FullSpectrum => 1,
+                crate::api::CutoffKindFfi::NaturalRolloff => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for crate::api::DuplicateGroupFfi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1328,6 +1424,7 @@ impl SseEncode for crate::api::FileReportFfi {
         <f64>::sse_encode(self.score_llr, serializer);
         <Option<u32>>::sse_encode(self.effective_bandwidth_hz, serializer);
         <Option<f64>>::sse_encode(self.cutoff_slope_db_oct, serializer);
+        <Option<crate::api::CutoffKindFfi>>::sse_encode(self.cutoff_kind, serializer);
         <Vec<crate::api::EvidenceFfi>>::sse_encode(self.evidences, serializer);
         <crate::api::QualityMetricsFfi>::sse_encode(self.quality, serializer);
         <Vec<String>>::sse_encode(self.guards_triggered, serializer);
@@ -1347,6 +1444,13 @@ impl SseEncode for crate::api::FormatFactsFfi {
         <u64>::sse_encode(self.duration_ms, serializer);
         <Option<u32>>::sse_encode(self.container_bitrate_kbps, serializer);
         <bool>::sse_encode(self.is_lossless_declared, serializer);
+    }
+}
+
+impl SseEncode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
     }
 }
 
@@ -1433,6 +1537,16 @@ impl SseEncode for Option<String> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <String>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::CutoffKindFfi> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::CutoffKindFfi>::sse_encode(value, serializer);
         }
     }
 }
@@ -1536,13 +1650,6 @@ impl SseEncode for crate::api::VolumeInfoFfi {
         <bool>::sse_encode(self.is_ready, serializer);
         <u64>::sse_encode(self.total_bytes, serializer);
         <u64>::sse_encode(self.free_bytes, serializer);
-    }
-}
-
-impl SseEncode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
     }
 }
 

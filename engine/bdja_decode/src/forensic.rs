@@ -70,16 +70,22 @@ pub fn analyze_forensic_headers(path: &Path) -> ForensicEvidence {
         "UNKNOWN".to_string()
     };
 
-    // Extension mismatch check: Declared lossless container, but actual binary is lossy bitstream
-    if ((ext == "wav" && !is_riff_wav)
-        || (ext == "flac" && !is_flac)
-        || (ext == "aif" && !is_aiff)
-        || (ext == "aiff" && !is_aiff))
-        && (is_mp3_id3 || is_mp3_sync || is_mp4 || is_ogg)
-    {
+    // Extension mismatch check:
+    let is_declared_lossless = ext == "wav" || ext == "flac" || ext == "aif" || ext == "aiff";
+    let is_actual_lossy = is_mp3_id3 || is_mp3_sync || is_mp4 || is_ogg;
+
+    if is_declared_lossless && is_actual_lossy {
         evidence.is_extension_mismatch = true;
         evidence.descriptions.push(format!(
             "Discrepancia crítica de extensión: declarada .{} pero el contenedor binario real es {}",
+            ext, evidence.detected_magic_type
+        ));
+    } else if (ext == "wma" || ext == "opus" || ext == "mka")
+        && (is_riff_wav || is_flac || is_aiff || is_mp3_id3 || is_mp3_sync || is_mp4 || is_ogg)
+    {
+        evidence.is_extension_mismatch = true;
+        evidence.descriptions.push(format!(
+            "Discrepancia de contenedor: extensión .{} declarada pero el contenedor real es {}",
             ext, evidence.detected_magic_type
         ));
     }

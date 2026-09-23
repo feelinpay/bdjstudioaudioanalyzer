@@ -3,9 +3,10 @@ use crate::quality::analyze_quality;
 use crate::spectrum::analyze_spectrum;
 use crate::stereo::analyze_stereo;
 use crate::temporal::analyze_temporal;
-use bdja_core::types::{Evidence, EvidenceCode, FormatFacts, QualityMetrics};
+use bdja_core::types::{CutoffKind, Evidence, EvidenceCode, FormatFacts, QualityMetrics};
 
 pub struct DspOutput {
+    pub cutoff_kind: CutoffKind,
     pub effective_bandwidth_hz: u32,
     pub cutoff_slope_db_oct: f64,
     pub evidences: Vec<Evidence>,
@@ -279,20 +280,20 @@ pub fn run_dsp_analysis(
         description: e02_desc,
     });
 
-    // E03: Shelf de 16 kHz
+    // E03: Shelf / escalón en el corte
     let e03_val = spec.shelf_16k_drop_db;
     let (e03_llr, e03_desc) = if e03_val >= 18.0 {
         (
             1.2,
             format!(
-                "Escalon / shelf pronunciado de {:.1} dB a 16 kHz (firma tipica LAME/AAC)",
+                "Escalon / shelf pronunciado de {:.1} dB en el corte (firma tipica LAME/AAC)",
                 e03_val
             ),
         )
     } else {
         (
             0.0,
-            format!("Sin escalon artificial a 16 kHz ({:.1} dB)", e03_val),
+            format!("Sin escalon artificial en el corte ({:.1} dB)", e03_val),
         )
     };
     evidences.push(Evidence {
@@ -647,6 +648,7 @@ pub fn run_dsp_analysis(
     });
 
     DspOutput {
+        cutoff_kind: spec.cutoff_kind,
         effective_bandwidth_hz: spec.effective_bandwidth_hz,
         cutoff_slope_db_oct: spec.cutoff_slope_db_oct,
         evidences,

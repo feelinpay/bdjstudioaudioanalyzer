@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/ffi/api.dart' as ffi;
@@ -9,6 +8,7 @@ import 'core/ffi/frb_generated.dart';
 import 'core/licensing/license_manager.dart';
 import 'core/security/device_fingerprint.dart';
 import 'core/security/secure_storage_impl.dart';
+import 'core/services/app_storage_service.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'features/analyzer/presentation/screens/home_screen.dart';
@@ -92,13 +92,12 @@ class _AudioAnalyzerAppState extends State<AudioAnalyzerApp> {
       final engineRev = ffi.engineRevision();
       final capabilityToken = widget.licenseManager.deriveCapabilityToken(hwid, engineRev);
 
-      final appDocDir = await getApplicationSupportDirectory();
-      final dataDir = '${appDocDir.path}${Platform.pathSeparator}bdj_audio_analyzer';
-      await Directory(dataDir).create(recursive: true);
+      await AppStorageService.initialize();
+      final dbDir = await AppStorageService.databaseDirectory();
 
       await ffi.engineInit(
         capabilityToken: capabilityToken,
-        dataDir: dataDir,
+        dataDir: dbDir.path,
       );
     } catch (e) {
       debugPrint('Error inicializando motor nativo: $e');

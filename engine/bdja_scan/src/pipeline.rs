@@ -47,6 +47,7 @@ pub fn analyze_single_file(path: &Path) -> Result<FileReport, String> {
                 score_llr: 0.0,
                 effective_bandwidth_hz: None,
                 cutoff_slope_db_oct: None,
+                cutoff_kind: None,
                 evidences: Vec::new(),
                 quality: QualityMetrics {
                     true_peak_dbtp: None,
@@ -73,15 +74,93 @@ fn analyze_single_file_inner(
     let decoded = match decode_audio_file(path) {
         Ok(d) => d,
         Err(e) => {
-            // If decode failed, produce an Inconclusive report with error explanation
+            let ext = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("UNKNOWN")
+                .to_lowercase();
+            let ext_upper = ext.to_uppercase();
+
+            let (codec, guard, summary) = match &e {
+                bdja_decode::DecodeError::Unsupported(msg) => (
+                    format!("No soportado ({})", ext),
+                    format!(
+                        "Formato de audio no soportado actualmente por el motor ({})",
+                        ext
+                    ),
+                    format!(
+                        "Formato de audio ({}) reconocido en la biblioteca pero no soportado por el decodificador: {}",
+                        ext_upper, msg
+                    ),
+                ),
+                bdja_decode::DecodeError::UnrecognizedFormat(msg) => (
+                    format!("No reconocido ({})", ext),
+                    format!("Formato o contenedor no reconocido ({})", ext),
+                    format!(
+                        "El archivo ({}) no pudo ser identificado como ningún contenedor de audio válido: {}",
+                        ext_upper, msg
+                    ),
+                ),
+                bdja_decode::DecodeError::CorruptedHeader(msg) => (
+                    "Error/Corrupto".to_string(),
+                    format!("Cabecera de audio dañada o corrupta ({})", ext),
+                    format!(
+                        "El archivo ({}) presenta una cabecera corrupta o malformada: {}",
+                        ext_upper, msg
+                    ),
+                ),
+                bdja_decode::DecodeError::DecoderInit(msg) => (
+                    "Error/Corrupto".to_string(),
+                    format!("Fallo al inicializar decodificador ({})", ext),
+                    format!(
+                        "No se pudo inicializar el decodificador para {}: flujo de audio dañado o inválido ({})",
+                        ext_upper, msg
+                    ),
+                ),
+                bdja_decode::DecodeError::Io(err) => (
+                    "Error/I-O".to_string(),
+                    format!("Error de lectura I/O: {}", err),
+                    format!("No se pudo leer el archivo de audio (error de I/O): {}", err),
+                ),
+                bdja_decode::DecodeError::ZeroLength => (
+                    "Error/Vacío".to_string(),
+                    "Archivo vacío o de longitud cero".to_string(),
+                    "El archivo de audio está vacío (0 bytes)".to_string(),
+                ),
+                bdja_decode::DecodeError::FileTooLarge(size) => (
+                    "Error/Tamaño".to_string(),
+                    format!("Archivo excede el límite máximo de 2 GB ({} bytes)", size),
+                    "El archivo excede el tamaño máximo permitido de 2 GB".to_string(),
+                ),
+                bdja_decode::DecodeError::DurationExceeded(dur) => (
+                    "Error/Duración".to_string(),
+                    format!("Duración excede el límite máximo de 3 horas ({} ms)", dur),
+                    "El archivo excede la duración máxima permitida de 3 horas".to_string(),
+                ),
+                bdja_decode::DecodeError::NoAudioTrack => (
+                    "Error/SinAudio".to_string(),
+                    "No se encontraron pistas de audio en el archivo".to_string(),
+                    "El archivo no contiene pistas de audio decodificables".to_string(),
+                ),
+                bdja_decode::DecodeError::PacketDecode(msg)
+                | bdja_decode::DecodeError::Symphonia(msg) => (
+                    "Error/Corrupto".to_string(),
+                    format!("Fallo de decodificación (posible archivo corrupto): {}", msg),
+                    format!(
+                        "No se pudo decodificar el flujo de audio (posible archivo corrupto o truncado): {}",
+                        msg
+                    ),
+                ),
+            };
+
             return Ok(FileReport {
                 file_id: 0,
                 path: path_str.to_string(),
                 file_size,
                 engine_rev: ENGINE_REV,
                 facts: FormatFacts {
-                    container: "UNKNOWN".to_string(),
-                    codec: "UNSUPPORTED".to_string(),
+                    container: ext_upper,
+                    codec,
                     codec_type: Codec::Unknown,
                     sample_rate: 0,
                     bit_depth: None,
@@ -91,10 +170,11 @@ fn analyze_single_file_inner(
                     is_lossless_declared: false,
                 },
                 verdict: Verdict::Inconclusive,
-                confidence: 0.5,
+                confidence: 0.0,
                 score_llr: 0.0,
                 effective_bandwidth_hz: None,
                 cutoff_slope_db_oct: None,
+                cutoff_kind: None,
                 evidences: Vec::new(),
                 quality: QualityMetrics {
                     true_peak_dbtp: None,
@@ -104,8 +184,8 @@ fn analyze_single_file_inner(
                     dynamic_range_db: None,
                     stereo_correlation: None,
                 },
-                guards_triggered: vec![format!("Fallo de decodificacion: {}", e)],
-                verdict_summary: format!("No se pudo decodificar el archivo de audio: {}", e),
+                guards_triggered: vec![guard],
+                verdict_summary: summary,
                 average_spectrum_db: vec![-120.0; 256],
             });
         }
@@ -146,6 +226,7 @@ fn analyze_single_file_inner(
         score_llr: verdict_out.score_llr,
         effective_bandwidth_hz: Some(dsp_out.effective_bandwidth_hz),
         cutoff_slope_db_oct: Some(dsp_out.cutoff_slope_db_oct),
+        cutoff_kind: Some(dsp_out.cutoff_kind),
         evidences: dsp_out.evidences,
         quality: dsp_out.quality,
         guards_triggered: dsp_out.guards_triggered,
@@ -153,3 +234,19 @@ fn analyze_single_file_inner(
         average_spectrum_db: dsp_out.average_spectrum_db,
     })
 }
+
+pub fn inspect_file_spectral_drops(
+    path: &std::path::Path,
+) -> Result<Vec<bdja_dsp::SpectralDropPoint>, String> {
+    let decoded = bdja_decode::decode_audio_file(path).map_err(|e| e.to_string())?;
+    let fft = bdja_dsp::fft::get_fft_processor();
+    let mut power_spectra = Vec::with_capacity(decoded.windows_8192.len());
+    for win in &decoded.windows_8192 {
+        power_spectra.push(fft.power_spectrum_8192(win));
+    }
+    Ok(bdja_dsp::measure_spectral_drops(
+        &power_spectra,
+        decoded.facts.sample_rate,
+    ))
+}
+

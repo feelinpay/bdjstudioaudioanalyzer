@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import '../../../../core/ffi/api.dart';
 import '../../../../core/theme/app_colors.dart';
 
 class SpectrumChart extends StatelessWidget {
@@ -8,6 +9,7 @@ class SpectrumChart extends StatelessWidget {
   final int? cutoffHz;
   final int sampleRate;
   final double? cutoffSlopeDbOct;
+  final CutoffKindFfi? cutoffKind;
   final double height;
 
   const SpectrumChart({
@@ -16,6 +18,7 @@ class SpectrumChart extends StatelessWidget {
     this.cutoffHz,
     this.sampleRate = 44100,
     this.cutoffSlopeDbOct,
+    this.cutoffKind,
     this.height = 180,
   });
 
@@ -30,14 +33,41 @@ class SpectrumChart extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
-        child: CustomPaint(
-          size: Size.infinite,
-          painter: _SpectrumPainter(
-            spectrumDb: spectrumDb,
-            cutoffHz: cutoffHz,
-            sampleRate: sampleRate,
-            cutoffSlopeDbOct: cutoffSlopeDbOct,
-          ),
+        child: Stack(
+          children: [
+            CustomPaint(
+              size: Size.infinite,
+              painter: _SpectrumPainter(
+                spectrumDb: spectrumDb,
+                cutoffHz: cutoffHz,
+                sampleRate: sampleRate,
+                cutoffSlopeDbOct: cutoffSlopeDbOct,
+                cutoffKind: cutoffKind,
+              ),
+            ),
+            if (spectrumDb.isEmpty)
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.blur_linear_rounded,
+                      color: AppColors.textDimmed.withOpacity(0.4),
+                      size: 30,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Sin espectro disponible (formato no decodificable o corrupto)',
+                      style: TextStyle(
+                        color: AppColors.textDimmed.withOpacity(0.7),
+                        fontSize: 12,
+                        fontFamily: 'Segoe UI',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -49,12 +79,14 @@ class _SpectrumPainter extends CustomPainter {
   final int? cutoffHz;
   final int sampleRate;
   final double? cutoffSlopeDbOct;
+  final CutoffKindFfi? cutoffKind;
 
   _SpectrumPainter({
     required this.spectrumDb,
     this.cutoffHz,
     required this.sampleRate,
     this.cutoffSlopeDbOct,
+    this.cutoffKind,
   });
 
   @override
@@ -142,51 +174,63 @@ class _SpectrumPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     canvas.drawPath(path, curvePaint);
 
-    // Draw Cutoff Marker if present
+    // Draw Cutoff Marker if present and not full spectrum
     if (cutoffHz != null && cutoffHz! > 0 && cutoffHz! < nyquist) {
-      final cutoffX = (cutoffHz! / nyquist) * size.width;
+      if (cutoffKind != CutoffKindFfi.fullSpectrum) {
+        final cutoffX = (cutoffHz! / nyquist) * size.width;
 
-      final isBrickwall = (cutoffSlopeDbOct ?? 0) >= 50.0;
-      final cutoffColor = isBrickwall ? AppColors.verdictTranscode : AppColors.verdictLikely;
+        final isBrickwall = cutoffKind != null
+            ? cutoffKind == CutoffKindFfi.brickwallCutoff
+            : (cutoffSlopeDbOct ?? 0) >= 50.0;
+        final isNatural = cutoffKind == CutoffKindFfi.naturalRolloff;
 
-      final cutoffLinePaint = Paint()
-        ..color = cutoffColor
-        ..strokeWidth = 1.5
-        ..style = PaintingStyle.stroke;
+        final cutoffColor = isBrickwall
+            ? AppColors.verdictTranscode
+            : (isNatural ? AppColors.electricCyan : AppColors.verdictLikely);
 
-      // Draw dashed line
-      double dashY = 0;
-      while (dashY < size.height) {
-        canvas.drawLine(
-          Offset(cutoffX, dashY),
-          Offset(cutoffX, math.min(dashY + 5, size.height)),
-          cutoffLinePaint,
+        final cutoffLinePaint = Paint()
+          ..color = cutoffColor
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke;
+
+        // Draw dashed line
+        double dashY = 0;
+        while (dashY < size.height) {
+          canvas.drawLine(
+            Offset(cutoffX, dashY),
+            Offset(cutoffX, math.min(dashY + 5, size.height)),
+            cutoffLinePaint,
+          );
+          dashY += 9;
+        }
+
+        // Cutoff tag badge
+        final badgeText = isBrickwall
+            ? '${(cutoffHz! / 1000).toStringAsFixed(1)} kHz corte'
+            : (isNatural
+                ? '${(cutoffHz! / 1000).toStringAsFixed(1)} kHz roll-off'
+                : '${(cutoffHz! / 1000).toStringAsFixed(1)} kHz límite');
+        final badgeSpan = TextSpan(
+          text: badgeText,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+          ),
         );
-        dashY += 9;
+        final badgeTp = TextPainter(text: badgeSpan, textDirection: TextDirection.ltr)..layout();
+        final badgeRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            math.min(cutoffX + 4, size.width - badgeTp.width - 12),
+            8,
+            badgeTp.width + 8,
+            badgeTp.height + 4,
+          ),
+          const Radius.circular(4),
+        );
+        canvas.drawRRect(badgeRect, Paint()..color = cutoffColor.withOpacity(0.85));
+        badgeTp.paint(canvas, Offset(badgeRect.left + 4, badgeRect.top + 2));
       }
-
-      // Cutoff tag badge
-      final badgeText = '${(cutoffHz! / 1000).toStringAsFixed(1)} kHz corte';
-      final badgeSpan = TextSpan(
-        text: badgeText,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10,
-          fontWeight: FontWeight.bold,
-        ),
-      );
-      final badgeTp = TextPainter(text: badgeSpan, textDirection: TextDirection.ltr)..layout();
-      final badgeRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          math.min(cutoffX + 4, size.width - badgeTp.width - 12),
-          8,
-          badgeTp.width + 8,
-          badgeTp.height + 4,
-        ),
-        const Radius.circular(4),
-      );
-      canvas.drawRRect(badgeRect, Paint()..color = cutoffColor.withOpacity(0.85));
-      badgeTp.paint(canvas, Offset(badgeRect.left + 4, badgeRect.top + 2));
     }
   }
 
@@ -201,6 +245,7 @@ class _SpectrumPainter extends CustomPainter {
   bool shouldRepaint(covariant _SpectrumPainter oldDelegate) {
     return oldDelegate.spectrumDb != spectrumDb ||
         oldDelegate.cutoffHz != cutoffHz ||
-        oldDelegate.cutoffSlopeDbOct != cutoffSlopeDbOct;
+        oldDelegate.cutoffSlopeDbOct != cutoffSlopeDbOct ||
+        oldDelegate.cutoffKind != cutoffKind;
   }
 }

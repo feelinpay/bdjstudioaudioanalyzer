@@ -7,40 +7,22 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-/// Extensiones analizables exhaustivamente por el motor DSP (decodificación vía Symphonia)
-pub const ANALYZABLE_EXTENSIONS: &[&str] = &[
-    "wav", "flac", "aif", "aiff", "mp3", "m4a", "aac", "ogg", "alac",
+/// Extensiones de audio reconocidas para el inventario y recorrido de la biblioteca
+pub const AUDIO_EXTENSIONS: &[&str] = &[
+    "wav", "flac", "aif", "aiff", "mp3", "m4a", "aac", "ogg", "alac", "wma", "opus", "aifc", "caf",
+    "mp4", "m4b", "oga", "mp2", "w64", "rf64", "mka", "wv", "ape", "tta", "dsf", "dff",
 ];
 
-/// Extensiones de audio reconocidas en la biblioteca del DJ para mantener conteo exacto
-/// de archivos, pero que no son decodificables actualmente por el backend DSP nativo.
-pub const UNSUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
-    "wma", "opus", "aifc", "caf", "mp4", "m4b", "oga", "mp2", "w64", "rf64", "mka", "wv", "ape",
-    "tta", "dsf", "dff",
-];
+/// Mantenido por compatibilidad con la API pública
+pub const SUPPORTED_EXTENSIONS: &[&str] = AUDIO_EXTENSIONS;
 
-/// Mantenido por compatibilidad regresiva con la API pública
-pub const SUPPORTED_EXTENSIONS: &[&str] = ANALYZABLE_EXTENSIONS;
-
-/// Retorna true si el archivo puede ser analizado exhaustivamente por el DSP
-pub fn is_analyzable(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|ext| ANALYZABLE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-        .unwrap_or(false)
-}
-
-/// Retorna true si el archivo es un formato de audio reconocido pero no soportado por el decodificador
-pub fn is_unsupported_audio(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|ext| UNSUPPORTED_AUDIO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-        .unwrap_or(false)
-}
-
-/// Retorna true si el archivo es un archivo de audio para propósitos de inventario y escaneo
+/// Retorna true si el archivo es un archivo de audio reconocido para inventario y escaneo
 pub fn is_audio_file(path: &Path) -> bool {
-    is_analyzable(path) || is_unsupported_audio(path)
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        AUDIO_EXTENSIONS.contains(&ext.to_lowercase().as_str())
+    } else {
+        false
+    }
 }
 
 pub fn scan_collection<F, P>(
@@ -176,65 +158,11 @@ where
             let report = match cached_report {
                 Some(r) => r,
                 None => {
-                    if is_unsupported_audio(path) {
-                        let ext = path
-                            .extension()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("UNKNOWN")
-                            .to_lowercase();
-                        let ext_upper = ext.to_uppercase();
-                        let mut unsupported_rep = bdja_core::types::FileReport {
-                            file_id: 0,
-                            path: path_str.clone(),
-                            file_size,
-                            engine_rev: ENGINE_REV,
-                            facts: bdja_core::types::FormatFacts {
-                                container: ext_upper.clone(),
-                                codec: format!("No soportado ({})", ext),
-                                codec_type: bdja_core::types::Codec::Unknown,
-                                sample_rate: 0,
-                                bit_depth: None,
-                                channels: 0,
-                                duration_ms: 0,
-                                container_bitrate_kbps: None,
-                                is_lossless_declared: false,
-                            },
-                            verdict: bdja_core::types::Verdict::Inconclusive,
-                            confidence: 0.0,
-                            score_llr: 0.0,
-                            effective_bandwidth_hz: None,
-                            cutoff_slope_db_oct: None,
-                            evidences: Vec::new(),
-                            quality: bdja_core::types::QualityMetrics {
-                                true_peak_dbtp: None,
-                                lufs_integrated: None,
-                                clipped_samples: 0,
-                                dc_offset: None,
-                                dynamic_range_db: None,
-                                stereo_correlation: None,
-                            },
-                            guards_triggered: vec![format!(
-                                "Formato de audio no soportado actualmente por el motor ({})",
-                                ext
-                            )],
-                            verdict_summary: format!(
-                                "Formato de audio ({}) reconocido en la biblioteca pero no soportado por el decodificador",
-                                ext_upper
-                            ),
-                            average_spectrum_db: Vec::new(),
-                        };
-                        if let Some(ref st) = store {
-                            if let Ok(id) = st.save_report(&unsupported_rep) {
-                                unsupported_rep.file_id = id;
-                            }
-                        }
-                        unsupported_rep
-                    } else {
-                        let path_buf = path.to_path_buf();
-                        let analyze_res =
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                analyze_single_file(&path_buf)
-                            }));
+                    let path_buf = path.to_path_buf();
+                    let analyze_res =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            analyze_single_file(&path_buf)
+                        }));
 
                     match analyze_res {
                         Ok(Ok(mut new_rep)) => {
@@ -257,7 +185,7 @@ where
                                         .and_then(|s| s.to_str())
                                         .unwrap_or("UNKNOWN")
                                         .to_uppercase(),
-                                    codec: "Error/Corrupted".to_string(),
+                                    codec: "Error/No procesado".to_string(),
                                     codec_type: bdja_core::types::Codec::Unknown,
                                     sample_rate: 0,
                                     bit_depth: None,
@@ -271,6 +199,7 @@ where
                                 score_llr: 0.0,
                                 effective_bandwidth_hz: None,
                                 cutoff_slope_db_oct: None,
+                                cutoff_kind: None,
                                 evidences: Vec::new(),
                                 quality: bdja_core::types::QualityMetrics {
                                     true_peak_dbtp: None,
@@ -281,7 +210,7 @@ where
                                     stereo_correlation: None,
                                 },
                                 guards_triggered: vec![
-                                    "Fallo al decodificar audio (archivo ilegible o corrupto)".to_string(),
+                                    format!("Error al procesar archivo: {}", err_msg),
                                 ],
                                 verdict_summary: format!("Error analizando archivo: {}", err_msg),
                                 average_spectrum_db: Vec::new(),
@@ -319,6 +248,7 @@ where
                                 score_llr: 0.0,
                                 effective_bandwidth_hz: None,
                                 cutoff_slope_db_oct: None,
+                                cutoff_kind: None,
                                 evidences: Vec::new(),
                                 quality: bdja_core::types::QualityMetrics {
                                     true_peak_dbtp: None,
@@ -329,7 +259,7 @@ where
                                     stereo_correlation: None,
                                 },
                                 guards_triggered: vec![
-                                    "Pánico interceptado por seguridad".to_string()
+                                    "Pánico interceptado por seguridad".to_string(),
                                 ],
                                 verdict_summary:
                                     "Pánico no controlado durante la decodificación (archivo severamente malformado)"
@@ -345,8 +275,7 @@ where
                         }
                     }
                 }
-            }
-        };
+            };
 
             on_file_analyzed(report);
         });
@@ -363,51 +292,47 @@ mod tests {
 
     #[test]
     fn test_audio_extension_classification() {
-        // Analizables
-        assert!(is_analyzable(Path::new("track.wav")));
-        assert!(is_analyzable(Path::new("track.FLAC")));
-        assert!(is_analyzable(Path::new("track.mp3")));
-        assert!(is_analyzable(Path::new("track.m4a")));
-        assert!(is_analyzable(Path::new("track.aac")));
-        assert!(is_analyzable(Path::new("track.ogg")));
-        assert!(is_analyzable(Path::new("track.aif")));
-        assert!(is_analyzable(Path::new("track.aiff")));
-        assert!(is_analyzable(Path::new("track.alac")));
-
-        assert!(!is_unsupported_audio(Path::new("track.wav")));
+        // Reconocidos para inventario y escaneo
         assert!(is_audio_file(Path::new("track.wav")));
-
-        // Reconocidos pero no soportados directamente por el backend DSP
-        assert!(is_unsupported_audio(Path::new("track.wma")));
-        assert!(is_unsupported_audio(Path::new("track.OPUS")));
-        assert!(is_unsupported_audio(Path::new("track.mka")));
-        assert!(is_unsupported_audio(Path::new("track.wv")));
-        assert!(is_unsupported_audio(Path::new("track.ape")));
-        assert!(is_unsupported_audio(Path::new("track.dsf")));
-
-        assert!(!is_analyzable(Path::new("track.wma")));
+        assert!(is_audio_file(Path::new("track.FLAC")));
+        assert!(is_audio_file(Path::new("track.mp3")));
+        assert!(is_audio_file(Path::new("track.m4a")));
+        assert!(is_audio_file(Path::new("track.aac")));
+        assert!(is_audio_file(Path::new("track.ogg")));
+        assert!(is_audio_file(Path::new("track.aif")));
+        assert!(is_audio_file(Path::new("track.aiff")));
+        assert!(is_audio_file(Path::new("track.alac")));
         assert!(is_audio_file(Path::new("track.wma")));
+        assert!(is_audio_file(Path::new("track.OPUS")));
+        assert!(is_audio_file(Path::new("track.mka")));
+        assert!(is_audio_file(Path::new("track.wv")));
+        assert!(is_audio_file(Path::new("track.ape")));
+        assert!(is_audio_file(Path::new("track.dsf")));
+        assert!(is_audio_file(Path::new("track.mp4")));
+        assert!(is_audio_file(Path::new("track.caf")));
+        assert!(is_audio_file(Path::new("track.mp2")));
 
         // No son audio
         assert!(!is_audio_file(Path::new("track.txt")));
         assert!(!is_audio_file(Path::new("track.pdf")));
         assert!(!is_audio_file(Path::new("track.cue")));
         assert!(!is_audio_file(Path::new("track.jpg")));
+        assert!(!is_audio_file(Path::new("track.exe")));
     }
 
     #[test]
     fn test_scan_unsupported_audio_generates_inconclusive_report_without_crash() {
         let temp_dir = std::env::temp_dir().join(format!("bdja_test_scan_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
-        let dummy_opus = temp_dir.join("test_track.opus");
-        let _ = std::fs::write(&dummy_opus, b"OggS_fake_opus_stream_data");
+        let dummy_wma = temp_dir.join("test_track.wma");
+        let _ = std::fs::write(&dummy_wma, b"ASF_random_unsupported_wma_bytes");
 
         let reports = Arc::new(std::sync::Mutex::new(Vec::new()));
         let reports_clone = Arc::clone(&reports);
 
         let cancel = Arc::new(AtomicBool::new(false));
         let count = scan_collection(
-            &[dummy_opus.clone()],
+            &[dummy_wma.clone()],
             "silent",
             true,
             None,
@@ -418,7 +343,7 @@ mod tests {
             |_, _, _| {},
         );
 
-        let _ = std::fs::remove_file(&dummy_opus);
+        let _ = std::fs::remove_file(&dummy_wma);
         let _ = std::fs::remove_dir(&temp_dir);
 
         assert_eq!(count.unwrap(), 1);
@@ -426,8 +351,45 @@ mod tests {
         assert_eq!(locked.len(), 1);
         let rep = &locked[0];
         assert_eq!(rep.verdict, bdja_core::types::Verdict::Inconclusive);
-        assert_eq!(rep.facts.container, "OPUS");
+        assert_eq!(rep.facts.container, "WMA");
         assert!(rep.facts.codec.contains("No soportado"));
-        assert!(rep.guards_triggered.iter().any(|g| g.contains("opus")));
+        assert!(rep.guards_triggered.iter().any(|g| g.contains("wma")));
+    }
+
+    #[test]
+    fn test_scan_mislabeled_container_is_probed_by_magic_bytes() {
+        // B-7b: Un archivo .wma que en realidad tiene bytes de WAV RIFF
+        // debe ser probado por la sonda de Symphonia y no descartado por la extensión.
+        let temp_dir =
+            std::env::temp_dir().join(format!("bdja_test_mislabel_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let fake_wma = temp_dir.join("fake_name.wma");
+
+        // Construir un WAV PCM mono de 44.1kHz válido mínimo
+        let mut wav_bytes = Vec::new();
+        wav_bytes.extend_from_slice(b"RIFF");
+        wav_bytes.extend_from_slice(&36u32.to_le_bytes()); // ChunkSize
+        wav_bytes.extend_from_slice(b"WAVE");
+        wav_bytes.extend_from_slice(b"fmt ");
+        wav_bytes.extend_from_slice(&16u32.to_le_bytes()); // Subchunk1Size (PCM = 16)
+        wav_bytes.extend_from_slice(&1u16.to_le_bytes()); // AudioFormat (1 = PCM)
+        wav_bytes.extend_from_slice(&1u16.to_le_bytes()); // NumChannels (1)
+        wav_bytes.extend_from_slice(&44100u32.to_le_bytes()); // SampleRate
+        wav_bytes.extend_from_slice(&(44100u32 * 2).to_le_bytes()); // ByteRate
+        wav_bytes.extend_from_slice(&2u16.to_le_bytes()); // BlockAlign
+        wav_bytes.extend_from_slice(&16u16.to_le_bytes()); // BitsPerSample
+        wav_bytes.extend_from_slice(b"data");
+        wav_bytes.extend_from_slice(&0u32.to_le_bytes()); // Subchunk2Size (0 datos)
+
+        let _ = std::fs::write(&fake_wma, &wav_bytes);
+
+        let report = crate::pipeline::analyze_single_file(&fake_wma);
+        let _ = std::fs::remove_file(&fake_wma);
+        let _ = std::fs::remove_dir(&temp_dir);
+
+        assert!(report.is_ok());
+        let rep = report.unwrap();
+        // La sonda identificó que el contenedor real es WAV (RIFF) a pesar de llamarse .wma
+        assert!(rep.facts.container.contains("WAV"));
     }
 }

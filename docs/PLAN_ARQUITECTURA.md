@@ -23,7 +23,7 @@ Regla de producto
 
 Ante duda, la app se abstiene. Un falso positivo que haga a un DJ reclamarle a un sello por un master legítimamente band-limited (vinilo, cinta, grabación de los 60, master con lowpass intencional) destruye la credibilidad del producto mucho más rápido que un falso negativo. El estado Inconcluso es un resultado de primera clase, no un fallo.
 
-El posicionamiento comercial es *«verifica la calidad real de tus remixes antes de comprarlos, venderlos o reproducirlos»*, conectado directamente con el catálogo de BDJ LATAM. No compite con iZotope RX ni con Voxengo SPAN: compite en **veredicto claro, escaneo de bibliotecas enteras y cero configuración**.
+El posicionamiento comercial es *«verifica la calidad real de tu música después de comprarla, antes de pincharla o revenderla»*: diseñado para que el DJ o editor analice cualquier carpeta, pendrive USB, SSD externo o disco duro sin ataduras a ninguna tienda ni catálogo, protegiendo a los DJs de fraudes y transcodes inflados («que a mis amigos no los engañen»). No compite con iZotope RX ni con Voxengo SPAN: compite en **veredicto claro, escaneo de bibliotecas enteras y cero configuración**.
 
 ## 01. Requisitos y presupuestos medibles
 
@@ -315,7 +315,7 @@ Sin dataset no hay umbrales, y sin umbrales el motor es una opinión. Esta es la
 
 ### Construcción del corpus (con material propio, sin descargar nada ajeno)
 
-1.  Partir de 200-400 masters lossless propios o de BDJ LATAM, variados en género, época, loudness y ancho de banda real (incluyendo a propósito material band-limited legítimo: vinilo, cinta, grabaciones viejas).
+1.  Partir de 200-400 masters lossless propios y de DJs locales, variados en género, época, loudness y ancho de banda real (incluyendo a propósito material band-limited legítimo: vinilo, cinta, grabaciones viejas).
 2.  Generar la matriz de transcodes con encoders reales: `lame` (CBR 128/192/256/320, VBR V0/V2), `qaac` o `afconvert` (AAC-LC 128/192/256), `oggenc` (q4/q8), y devolver todo a WAV/FLAC. Guardar el linaje en el nombre y en un manifiesto CSV.
 3.  Añadir casos difíciles: doble transcode, upsample a 48/96 kHz, padding a 24 bits, MP3 dentro de WAV, FLAC renombrado a WAV, archivos truncados y corruptos.
 4.  `bdja calibrate` ajusta las sigmoides y los pesos, y escupe una tabla de umbrales versionada que se compila dentro del binario con su `engine_rev`.

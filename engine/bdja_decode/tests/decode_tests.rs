@@ -110,3 +110,111 @@ fn test_forensic_detects_real_lame_transcode() {
     assert!(evidence.has_xing_lame_header);
     assert_eq!(evidence.encoder_string.as_deref(), Some("LAME3.100"));
 }
+
+#[test]
+fn test_unsupported_format_handling() {
+    use bdja_decode::decoder::decode_audio_file;
+    use bdja_decode::error::DecodeError;
+
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let wv_path = tmp_dir.path().join("test.wv");
+
+    // Write dummy header resembling a non-symphonia format (WavPack magic 'wvpk')
+    let mut f = std::fs::File::create(&wv_path).unwrap();
+    let mut data = vec![0u8; 512];
+    data[0..4].copy_from_slice(b"wvpk");
+    f.write_all(&data).unwrap();
+    drop(f);
+
+    let res = decode_audio_file(&wv_path);
+    assert!(res.is_err());
+    match res.err().unwrap() {
+        DecodeError::Unsupported(_) | DecodeError::UnrecognizedFormat(_) => {
+            // Correctly classified as unsupported/unrecognized format, NOT Corrupted or Io
+        }
+        other => panic!(
+            "Expected Unsupported or UnrecognizedFormat, got {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn test_corrupted_wav_is_not_reported_as_unsupported() {
+    use bdja_decode::decoder::decode_audio_file;
+    use bdja_decode::error::DecodeError;
+
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let broken_wav_path = tmp_dir.path().join("broken.wav");
+
+    // Crear archivo .wav con datos truncados y corruptos
+    let mut f = std::fs::File::create(&broken_wav_path).unwrap();
+    let mut data = vec![0u8; 64];
+    data[0..4].copy_from_slice(b"RIFF");
+    data[4..8].copy_from_slice(&999999u32.to_le_bytes());
+    data[8..12].copy_from_slice(b"WAVE");
+    f.write_all(&data).unwrap();
+    drop(f);
+
+    let res = decode_audio_file(&broken_wav_path);
+    assert!(res.is_err());
+    let err = res.err().unwrap();
+    match err {
+        DecodeError::Unsupported(_) => {
+            panic!("B-15 Regresión: Un archivo .wav dañado NUNCA debe reportarse como DecodeError::Unsupported");
+        }
+        DecodeError::CorruptedHeader(_) | DecodeError::Io(_) => {
+            // Correcto: clasificado como cabecera corrupta o fallo de lectura por truncamiento
+        }
+        other => {
+            panic!("Esperaba CorruptedHeader o Io, obtenido: {:?}", other);
+        }
+    }
+}
+
+#[test]
+fn test_wav_with_mp3_tag_0x0055_is_unsupported_codec_not_corrupted() {
+    use bdja_decode::decoder::decode_audio_file;
+    use bdja_decode::error::DecodeError;
+
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let wav_mp3_path = tmp_dir.path().join("wav_mp3_0x0055.wav");
+
+    let mut f = std::fs::File::create(&wav_mp3_path).unwrap();
+    // Build valid RIFF WAVE header with fmt chunk declaring 0x0055 (MPEGLAYER3)
+    let mut data = Vec::new();
+    data.extend_from_slice(b"RIFF");
+    data.extend_from_slice(&(44u32).to_le_bytes()); // total len - 8
+    data.extend_from_slice(b"WAVE");
+    data.extend_from_slice(b"fmt ");
+    data.extend_from_slice(&(16u32).to_le_bytes()); // fmt chunk size
+    data.extend_from_slice(&(0x0055u16).to_le_bytes()); // WAVE_FORMAT_MPEGLAYER3
+    data.extend_from_slice(&(2u16).to_le_bytes()); // 2 channels
+    data.extend_from_slice(&(44100u32).to_le_bytes()); // 44100 Hz
+    data.extend_from_slice(&(16000u32).to_le_bytes()); // avg bytes/sec
+    data.extend_from_slice(&(1u16).to_le_bytes()); // block align
+    data.extend_from_slice(&(0u16).to_le_bytes()); // bits per sample
+    data.extend_from_slice(b"data");
+    data.extend_from_slice(&(0u32).to_le_bytes()); // data size 0
+    f.write_all(&data).unwrap();
+    drop(f);
+
+    let res = decode_audio_file(&wav_mp3_path);
+    assert!(res.is_err());
+    match res.err().unwrap() {
+        DecodeError::Unsupported(msg) => {
+            // B-16: Symphonia reconoce el contenedor WAV, pero rechaza la etiqueta 0x0055
+            assert!(
+                msg.contains("wav") || msg.contains("wave format"),
+                "El mensaje debe indicar códec/formato interno no soportado, obtenido: {}",
+                msg
+            );
+        }
+        DecodeError::CorruptedHeader(_) => {
+            panic!("B-16 Regresión: Un WAV válido con formato 0x0055 NO debe reportarse como CorruptedHeader");
+        }
+        other => {
+            panic!("Esperaba DecodeError::Unsupported, obtenido: {:?}", other);
+        }
+    }
+}

@@ -9,10 +9,13 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `hash_to_visible_hwid`, `is_valid_hwid_format`, `map_report_to_ffi`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ScanJob`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Devuelve la revision del motor nativo.
 int engineRevision() => RustLib.instance.api.crateApiEngineRevision();
+
+Future<List<String>> getOrDeriveHwidCandidates() =>
+    RustLib.instance.api.crateApiGetOrDeriveHwidCandidates();
 
 Future<List<String>> deriveNativeHwidCandidates() =>
     RustLib.instance.api.crateApiDeriveNativeHwidCandidates();
@@ -34,7 +37,7 @@ Future<List<VolumeInfoFfi>> listSystemVolumes() =>
 Future<FileReportFfi> analyzeFile({required String path}) =>
     RustLib.instance.api.crateApiAnalyzeFile(path: path);
 
-/// Analisis rapido preliminar (alias compatible).
+/// Analisis rapido preliminar (alias compatible deprecado hacia analyze_file).
 Future<FileReportFfi> analyzeFileQuick({required String path}) =>
     RustLib.instance.api.crateApiAnalyzeFileQuick(path: path);
 
@@ -64,7 +67,7 @@ Future<bool> cancelScanJob({required PlatformInt64 jobId}) =>
 /// Cancela todos los trabajos de escaneo activos inmediatamente.
 Future<bool> cancelAllScans() => RustLib.instance.api.crateApiCancelAllScans();
 
-/// Escanea una carpeta o unidad y analiza hasta `max_files` archivos de audio encontrados (0 para ilimitado).
+/// Escanea una carpeta o unidad de forma síncrona (deprecado hacia start_scan_job).
 Future<List<FileReportFfi>> scanDirectoryAudio({
   required String rootPath,
   required int maxFiles,
@@ -109,6 +112,8 @@ Future<bool> exportReportsJson({required String outPath}) =>
 
 /// Diagnostico interno del motor nativo.
 Future<String> diagnostics() => RustLib.instance.api.crateApiDiagnostics();
+
+enum CutoffKindFfi { brickwallCutoff, fullSpectrum, naturalRolloff }
 
 class DuplicateGroupFfi {
   final String blake3Hash;
@@ -212,6 +217,7 @@ class FileReportFfi {
   final double scoreLlr;
   final int? effectiveBandwidthHz;
   final double? cutoffSlopeDbOct;
+  final CutoffKindFfi? cutoffKind;
   final List<EvidenceFfi> evidences;
   final QualityMetricsFfi quality;
   final List<String> guardsTriggered;
@@ -230,6 +236,7 @@ class FileReportFfi {
     required this.scoreLlr,
     this.effectiveBandwidthHz,
     this.cutoffSlopeDbOct,
+    this.cutoffKind,
     required this.evidences,
     required this.quality,
     required this.guardsTriggered,
@@ -250,6 +257,7 @@ class FileReportFfi {
       scoreLlr.hashCode ^
       effectiveBandwidthHz.hashCode ^
       cutoffSlopeDbOct.hashCode ^
+      cutoffKind.hashCode ^
       evidences.hashCode ^
       quality.hashCode ^
       guardsTriggered.hashCode ^
@@ -272,6 +280,7 @@ class FileReportFfi {
           scoreLlr == other.scoreLlr &&
           effectiveBandwidthHz == other.effectiveBandwidthHz &&
           cutoffSlopeDbOct == other.cutoffSlopeDbOct &&
+          cutoffKind == other.cutoffKind &&
           evidences == other.evidences &&
           quality == other.quality &&
           guardsTriggered == other.guardsTriggered &&

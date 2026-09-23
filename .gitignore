@@ -45,3 +45,7 @@ tools/corpus_test/
 *.mp3
 *.flac
 *.m4a
+
+# Distribution build output
+distribution/*.exe
+distribution/*.sha256

@@ -1288,3 +1288,87 @@ fn test_dsp_mp3_320_nyquist_cliff_not_exonerated_as_full_spectrum() {
         verdict_out.score_llr
     );
 }
+
+#[test]
+fn test_dsp_average_spectrum_db_downsampling_computes_mean_power() {
+    let sample_rate = 44100;
+
+    let mut windows_8192 = Vec::new();
+    for win_idx in 0..4 {
+        let mut win = vec![0.0f32; 8192];
+        for f_khz in 1..=15 {
+            let freq = f_khz as f32 * 1000.0;
+            let phase = win_idx as f32 * 0.5;
+            for (i, s) in win.iter_mut().enumerate() {
+                *s += (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32 + phase)
+                    .sin()
+                    / 15.0;
+            }
+        }
+        windows_8192.push(win);
+    }
+
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 5000,
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    let empty_1024: Vec<Vec<f32>> = Vec::new();
+    let output = run_dsp_analysis(
+        &facts,
+        &windows_8192,
+        &empty_1024,
+        &windows_8192[0],
+        &windows_8192[0],
+        0.8,
+        0,
+        0.0,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    // 1. CutoffKind expuesto
+    assert_eq!(
+        output.cutoff_kind,
+        bdja_core::types::CutoffKind::BrickwallCutoff
+    );
+
+    // 2. average_spectrum_db contiene 256 puntos
+    assert_eq!(output.average_spectrum_db.len(), 256);
+
+    // 3. Banda activa (hasta ~15 kHz) vs banda muerta (> 16 kHz)
+    let nyquist = sample_rate as f32 / 2.0;
+    let idx_10k = ((10000.0 / nyquist) * 256.0) as usize;
+    let idx_18k = ((18000.0 / nyquist) * 256.0) as usize;
+
+    let db_passband = output.average_spectrum_db[idx_10k];
+    let db_stopband = output.average_spectrum_db[idx_18k];
+
+    // La banda de paso tiene señal plena
+    assert!(
+        db_passband > -10.0,
+        "Passband dB debe tener alta energía, obtenido: {}",
+        db_passband
+    );
+
+    // La banda atenuada debe registrar la caída profunda (> 50 dB de atenuación)
+    assert!(
+        db_stopband < -50.0,
+        "Stopband dB debe estar atenuado (< -50 dB), obtenido: {}",
+        db_stopband
+    );
+    assert!(
+        db_passband - db_stopband > 50.0,
+        "La caída espectral promedio debe ser nítida (> 50 dB), obtenido: {}",
+        db_passband - db_stopband
+    );
+}

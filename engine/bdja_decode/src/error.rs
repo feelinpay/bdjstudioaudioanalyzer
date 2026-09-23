@@ -14,8 +14,14 @@ pub enum DecodeError {
     #[error("Duracion excede el limite maximo de 3 horas ({0} ms)")]
     DurationExceeded(u64),
 
+    #[error("Formato o códec no soportado por el motor: {0}")]
+    Unsupported(String),
+
     #[error("Formato o contenedor no reconocido por el motor: {0}")]
     UnrecognizedFormat(String),
+
+    #[error("Cabecera o flujo de audio corrupto: {0}")]
+    CorruptedHeader(String),
 
     #[error("No se encontraron pistas de audio en el archivo")]
     NoAudioTrack,

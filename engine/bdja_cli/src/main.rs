@@ -15,10 +15,10 @@ fn print_usage() {
     println!("\nUSO:");
     println!("  bdja_cli analyze <ruta_archivo> [--json]              Analiza un archivo individual de audio");
     println!("  bdja_cli scan <ruta_directorio>                       Escanea una carpeta o biblioteca de audio");
-    println!("  bdja_cli validate <corpus_dir|manifiesto.csv>         Valida precisión, recall y tasa de falsos positivos (FPR)");
-    println!("  bdja_cli validate --lossless-dir <dir> --transcode-dir <dir>  Valida usando dos carpetas independientes");
-    println!("  bdja_cli calibrate <corpus_dir|manifiesto.csv>        Calcula distribución de LLR, percentiles y umbrales óptimos");
-    println!("  bdja_cli calibrate --lossless-dir <dir> --transcode-dir <dir> Calcula umbrales óptimos usando dos carpetas");
+    println!("  bdja_cli validate <corpus_dir|manifiesto.csv> [--sweep-drop] Valida precisión, recall y tasa de falsos positivos (FPR)");
+    println!("  bdja_cli validate --lossless-dir <dir> --transcode-dir <dir> [--sweep-drop] Valida usando dos carpetas independientes");
+    println!("  bdja_cli calibrate <corpus_dir|manifiesto.csv> [--sweep-drop] Calcula distribución de LLR, percentiles y umbrales óptimos");
+    println!("  bdja_cli calibrate --lossless-dir <dir> --transcode-dir <dir> [--sweep-drop] Calcula umbrales óptimos usando dos carpetas");
     println!("  bdja_cli version                                      Muestra la revisión del motor y versión");
     println!("  bdja_cli help                                         Muestra esta ayuda");
 }
@@ -223,10 +223,31 @@ fn run_scan(dir_str: &str) {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Provenance {
+    Lossless,
+    Transcode,
+    LossyConfirmed,
+    ProvenanceUnknown,
+}
+
 #[derive(Debug, Clone)]
 struct CorpusSample {
     path: PathBuf,
+    provenance: Provenance,
     is_transcode: bool,
+    codec_origen: Option<String>,
+    bitrate: Option<String>,
+    variant_id: Option<String>,
+    master_source: Option<String>,
+}
+
+struct ExcludedSample {
+    path: PathBuf,
+    provenance: Provenance,
+    verdict: bdja_core::types::Verdict,
+    score_llr: f64,
+    summary: String,
 }
 
 fn collect_audio_from_dir(dir: &Path, is_transcode: bool) -> Result<Vec<CorpusSample>, String> {
@@ -239,10 +260,19 @@ fn collect_audio_from_dir(dir: &Path, is_transcode: bool) -> Result<Vec<CorpusSa
         .into_iter()
         .flatten()
     {
-        if e.file_type().is_file() && bdja_scan::is_analyzable(&e.path()) {
+        if e.file_type().is_file() && bdja_scan::is_audio_file(&e.path()) {
             samples.push(CorpusSample {
                 path: e.path(),
+                provenance: if is_transcode {
+                    Provenance::Transcode
+                } else {
+                    Provenance::Lossless
+                },
                 is_transcode,
+                codec_origen: None,
+                bitrate: None,
+                variant_id: None,
+                master_source: None,
             });
         }
     }
@@ -281,35 +311,62 @@ fn load_corpus_samples(target_str: &str) -> Result<Vec<CorpusSample>, String> {
             if parts.len() < 2 {
                 continue;
             }
-            let file_path = PathBuf::from(parts[0]);
-            let label = parts[1].to_lowercase();
-            let is_transcode = label.contains("transcode")
-                || label.contains("fake")
-                || label.contains("lossy")
-                || label.contains("upsampled")
-                || label.contains("mp3")
-                || label.contains("aac")
-                || label == "1"
-                || label == "true";
-            let is_lossless = label.contains("lossless")
-                || label.contains("genuine")
-                || label.contains("authentic")
-                || label.contains("master")
-                || label.contains("original")
-                || label == "0"
-                || label == "false";
+            let raw_path = PathBuf::from(parts[0]);
+            let file_path = if raw_path.is_relative() {
+                if let Some(parent) = target_path.parent() {
+                    parent.join(&raw_path)
+                } else {
+                    raw_path
+                }
+            } else {
+                raw_path
+            };
 
-            if is_transcode {
-                samples.push(CorpusSample {
-                    path: file_path,
-                    is_transcode: true,
-                });
-            } else if is_lossless {
-                samples.push(CorpusSample {
-                    path: file_path,
-                    is_transcode: false,
-                });
-            }
+            let label = parts[1].to_lowercase();
+            let provenance = match label.as_str() {
+                "lossy_confirmed" => Provenance::LossyConfirmed,
+                "provenance_unknown" => Provenance::ProvenanceUnknown,
+                _ if label.contains("transcode")
+                    || label.contains("fake")
+                    || label.contains("lossy")
+                    || label.contains("upsampled")
+                    || label.contains("mp3")
+                    || label.contains("aac")
+                    || label == "1"
+                    || label == "true" =>
+                {
+                    Provenance::Transcode
+                }
+                _ => Provenance::Lossless,
+            };
+            let is_transcode = provenance == Provenance::Transcode;
+
+            let codec_origen = parts
+                .get(2)
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty());
+            let bitrate = parts
+                .get(3)
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty());
+            let variant_id = parts
+                .get(4)
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty());
+            let master_source = parts
+                .get(5)
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty());
+
+            samples.push(CorpusSample {
+                path: file_path,
+                provenance,
+                is_transcode,
+                codec_origen,
+                bitrate,
+                variant_id,
+                master_source,
+            });
         }
     } else {
         for e in jwalk::WalkDir::new(target_path)
@@ -317,7 +374,7 @@ fn load_corpus_samples(target_str: &str) -> Result<Vec<CorpusSample>, String> {
             .into_iter()
             .flatten()
         {
-            if e.file_type().is_file() && bdja_scan::is_analyzable(&e.path()) {
+            if e.file_type().is_file() && bdja_scan::is_audio_file(&e.path()) {
                 let p = e.path();
                 let path_lower = p.to_string_lossy().to_lowercase();
                 let is_transcode = path_lower.contains("transcode")
@@ -333,12 +390,22 @@ fn load_corpus_samples(target_str: &str) -> Result<Vec<CorpusSample>, String> {
                 if is_transcode {
                     samples.push(CorpusSample {
                         path: p,
+                        provenance: Provenance::Transcode,
                         is_transcode: true,
+                        codec_origen: None,
+                        bitrate: None,
+                        variant_id: None,
+                        master_source: None,
                     });
                 } else if is_lossless {
                     samples.push(CorpusSample {
                         path: p,
+                        provenance: Provenance::Lossless,
                         is_transcode: false,
+                        codec_origen: None,
+                        bitrate: None,
+                        variant_id: None,
+                        master_source: None,
                     });
                 }
             }
@@ -348,15 +415,20 @@ fn load_corpus_samples(target_str: &str) -> Result<Vec<CorpusSample>, String> {
     Ok(samples)
 }
 
-fn parse_corpus_args(args: &[String]) -> Result<(String, Vec<CorpusSample>), String> {
+fn parse_corpus_args(args: &[String]) -> Result<(String, Vec<CorpusSample>, bool), String> {
     let mut lossless_dir: Option<&str> = None;
     let mut transcode_dir: Option<&str> = None;
     let mut manifest_path: Option<&str> = None;
     let mut positional: Option<&str> = None;
+    let mut sweep_drop = false;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--sweep-drop" => {
+                sweep_drop = true;
+                i += 1;
+            }
             "--lossless-dir" => {
                 if i + 1 < args.len() {
                     lossless_dir = Some(&args[i + 1]);
@@ -407,13 +479,13 @@ fn parse_corpus_args(args: &[String]) -> Result<(String, Vec<CorpusSample>), Str
             "Carpetas independientes (Lossless: '{}' [{} pistas], Transcode: '{}' [{} pistas])",
             l_dir, n_l, t_dir, n_t
         );
-        return Ok((desc, samples));
+        return Ok((desc, samples, sweep_drop));
     }
 
     if let Some(target) = manifest_path.or(positional) {
         let samples = load_corpus_samples(target)?;
         let desc = format!("Corpus: '{}'", target);
-        return Ok((desc, samples));
+        return Ok((desc, samples, sweep_drop));
     }
 
     Err("Debe especificar un corpus: '--lossless-dir <dir> --transcode-dir <dir>', '--manifest <csv>' o una ruta posicional.".to_string())
@@ -446,7 +518,7 @@ fn std_dev(scores: &[f64], mean: f64) -> f64 {
     variance.sqrt()
 }
 
-fn run_validate(target_desc: &str, samples: Vec<CorpusSample>) {
+fn run_validate(target_desc: &str, samples: Vec<CorpusSample>, sweep_drop: bool) {
     println!("============================================================");
     println!(" BDJ STUDIO AUDIO ANALYZER — VALIDACIÓN FORENSE DE CORPUS");
     println!("============================================================");
@@ -458,17 +530,64 @@ fn run_validate(target_desc: &str, samples: Vec<CorpusSample>) {
         return;
     }
 
-    let mut tp = 0u64;
-    let mut fn_count = 0u64;
-    let mut tn = 0u64;
-    let mut fp = 0u64;
+    let mut tp_strict = 0u64;
+    let mut fn_strict = 0u64;
+    let mut tn_strict = 0u64;
+    let mut fp_strict = 0u64;
+
+    let mut tp_perm = 0u64;
+    let mut fn_perm = 0u64;
+    let mut tn_perm = 0u64;
+    let mut fp_perm = 0u64;
+
     let mut inconclusive = 0u64;
+    let mut excluded_samples: Vec<ExcludedSample> = Vec::new();
+
+    #[derive(Default)]
+    struct VariantStats {
+        total: u64,
+        tp_strict: u64,
+        tp_perm: u64,
+        inconclusive: u64,
+    }
+    let mut variant_stats: std::collections::BTreeMap<String, VariantStats> =
+        std::collections::BTreeMap::new();
+
+    #[derive(Default)]
+    struct MasterStats {
+        lossless_ok: bool,
+        lossless_evaluated: bool,
+        lossless_verdict: Option<bdja_core::types::Verdict>,
+        lossless_llr: f64,
+        transcodes_total: u64,
+        transcodes_strict_tp: u64,
+        transcodes_perm_tp: u64,
+        missed_variants_strict: Vec<String>,
+        missed_variants_perm: Vec<String>,
+    }
+    let mut master_stats: std::collections::BTreeMap<String, MasterStats> =
+        std::collections::BTreeMap::new();
 
     let start = Instant::now();
     for s in &samples {
         match bdja_scan::analyze_single_file(&s.path) {
             Ok(report) => {
-                let is_convicted = matches!(
+                if s.provenance == Provenance::LossyConfirmed
+                    || s.provenance == Provenance::ProvenanceUnknown
+                {
+                    excluded_samples.push(ExcludedSample {
+                        path: s.path.clone(),
+                        provenance: s.provenance,
+                        verdict: report.verdict,
+                        score_llr: report.score_llr,
+                        summary: report.verdict_summary,
+                    });
+                    continue;
+                }
+
+                let is_strict_convicted =
+                    report.verdict == bdja_core::types::Verdict::ProbableTranscode;
+                let is_perm_convicted = matches!(
                     report.verdict,
                     bdja_core::types::Verdict::ProbableTranscode
                         | bdja_core::types::Verdict::Suspicious
@@ -478,31 +597,109 @@ fn run_validate(target_desc: &str, samples: Vec<CorpusSample>) {
                     bdja_core::types::Verdict::LosslessVerified
                         | bdja_core::types::Verdict::LikelyLossless
                 );
+                let is_inc = report.verdict == bdja_core::types::Verdict::Inconclusive;
 
                 if s.is_transcode {
-                    if is_convicted {
-                        tp += 1;
-                    } else if is_cleared {
-                        fn_count += 1;
+                    if is_strict_convicted {
+                        tp_strict += 1;
+                    } else {
+                        fn_strict += 1;
+                    }
+
+                    if is_perm_convicted {
+                        tp_perm += 1;
+                    } else {
+                        fn_perm += 1;
+                        if is_cleared {
+                            println!(
+                                "  [FALSO NEGATIVO] {} (LLR={:.2}, Veredicto: {:?})",
+                                s.path.display(),
+                                report.score_llr,
+                                report.verdict
+                            );
+                        }
+                    }
+
+                    if is_inc {
+                        inconclusive += 1;
+                    }
+
+                    let var_key = match (&s.codec_origen, &s.bitrate) {
+                        (Some(c), Some(b)) => format!("{} {}", c, b),
+                        (Some(c), None) => c.clone(),
+                        (None, Some(b)) => b.clone(),
+                        (None, None) => s.variant_id.clone().unwrap_or_default(),
+                    };
+                    if !var_key.is_empty() {
+                        let entry = variant_stats.entry(var_key).or_default();
+                        entry.total += 1;
+                        if is_strict_convicted {
+                            entry.tp_strict += 1;
+                        }
+                        if is_perm_convicted {
+                            entry.tp_perm += 1;
+                        }
+                        if is_inc {
+                            entry.inconclusive += 1;
+                        }
+                    }
+
+                    if let Some(master_name) = &s.master_source {
+                        let m_entry = master_stats.entry(master_name.clone()).or_default();
+                        m_entry.transcodes_total += 1;
+                        let var_label = match (&s.codec_origen, &s.bitrate) {
+                            (Some(c), Some(b)) => format!("{} {}", c, b),
+                            _ => s
+                                .variant_id
+                                .clone()
+                                .unwrap_or_else(|| "transcode".to_string()),
+                        };
+                        if is_strict_convicted {
+                            m_entry.transcodes_strict_tp += 1;
+                        } else {
+                            m_entry.missed_variants_strict.push(var_label.clone());
+                        }
+                        if is_perm_convicted {
+                            m_entry.transcodes_perm_tp += 1;
+                        } else {
+                            m_entry.missed_variants_perm.push(var_label);
+                        }
+                    }
+                } else {
+                    if is_strict_convicted {
+                        fp_strict += 1;
                         println!(
-                            "  [FALSO NEGATIVO] {} (LLR={:.2})",
+                            "  [FALSO POSITIVO ESTRICTO] {} (LLR={:.2})",
                             s.path.display(),
                             report.score_llr
                         );
                     } else {
+                        tn_strict += 1;
+                    }
+
+                    if is_perm_convicted {
+                        fp_perm += 1;
+                        println!(
+                            "  [FALSO POSITIVO PERMISIVO] {} (LLR={:.2}, Veredicto: {:?})",
+                            s.path.display(),
+                            report.score_llr,
+                            report.verdict
+                        );
+                    } else {
+                        tn_perm += 1;
+                    }
+
+                    if is_inc {
                         inconclusive += 1;
                     }
-                } else if is_cleared {
-                    tn += 1;
-                } else if is_convicted {
-                    fp += 1;
-                    println!(
-                        "  [FALSO POSITIVO] {} (LLR={:.2})",
-                        s.path.display(),
-                        report.score_llr
-                    );
-                } else {
-                    inconclusive += 1;
+
+                    if let Some(master_name) = &s.master_source {
+                        let m_entry = master_stats.entry(master_name.clone()).or_default();
+                        m_entry.lossless_evaluated = true;
+                        m_entry.lossless_verdict = Some(report.verdict);
+                        m_entry.lossless_llr = report.score_llr;
+                        m_entry.lossless_ok = !is_strict_convicted && !is_perm_convicted;
+                    }
                 }
             }
             Err(e) => {
@@ -513,58 +710,237 @@ fn run_validate(target_desc: &str, samples: Vec<CorpusSample>) {
     }
 
     let elapsed = start.elapsed();
-    let total_classified = tp + fn_count + tn + fp;
-    let recall = if tp + fn_count > 0 {
-        (tp as f64) / ((tp + fn_count) as f64) * 100.0
+
+    // Métricas Frontera Estricta (ProbableTranscode, LLR >= +4.0)
+    let recall_strict = if tp_strict + fn_strict > 0 {
+        (tp_strict as f64) / ((tp_strict + fn_strict) as f64) * 100.0
     } else {
         0.0
     };
-    let fpr = if fp + tn > 0 {
-        (fp as f64) / ((fp + tn) as f64) * 100.0
+    let fpr_strict = if fp_strict + tn_strict > 0 {
+        (fp_strict as f64) / ((fp_strict + tn_strict) as f64) * 100.0
     } else {
         0.0
     };
-    let precision = if tp + fp > 0 {
-        (tp as f64) / ((tp + fp) as f64) * 100.0
+    let precision_strict = if tp_strict + fp_strict > 0 {
+        (tp_strict as f64) / ((tp_strict + fp_strict) as f64) * 100.0
     } else {
         0.0
     };
-    let accuracy = if total_classified > 0 {
-        ((tp + tn) as f64) / (total_classified as f64) * 100.0
+
+    // Métricas Frontera Permisiva (Suspicious o superior, LLR >= +1.5)
+    let total_classified_perm = tp_perm + fn_perm + tn_perm + fp_perm;
+    let recall_perm = if tp_perm + fn_perm > 0 {
+        (tp_perm as f64) / ((tp_perm + fn_perm) as f64) * 100.0
+    } else {
+        0.0
+    };
+    let fpr_perm = if fp_perm + tn_perm > 0 {
+        (fp_perm as f64) / ((fp_perm + tn_perm) as f64) * 100.0
+    } else {
+        0.0
+    };
+    let precision_perm = if tp_perm + fp_perm > 0 {
+        (tp_perm as f64) / ((tp_perm + fp_perm) as f64) * 100.0
+    } else {
+        0.0
+    };
+    let accuracy_perm = if total_classified_perm > 0 {
+        ((tp_perm + tn_perm) as f64) / (total_classified_perm as f64) * 100.0
     } else {
         0.0
     };
 
     println!("\n------------------------------------------------------------");
-    println!(" RESULTADOS DE VALIDACIÓN (Matriz de Confusión)");
+    println!(" RESULTADOS DE VALIDACIÓN (B-9: Desglose por Frontera)");
     println!("------------------------------------------------------------");
-    println!("  Total evaluados:             {}", samples.len());
-    println!("  Total clasificados:          {}", total_classified);
-    println!("  Verdaderos Positivos (TP):   {}", tp);
-    println!("  Falsos Negativos (FN):       {}", fn_count);
-    println!("  Verdaderos Negativos (TN):   {}", tn);
-    println!("  Falsos Positivos (FP):       {}", fp);
-    println!("  Casos Inconclusos:           {}", inconclusive);
-    println!("------------------------------------------------------------");
-    println!("  Sensibilidad / Recall:       {:.2}%", recall);
     println!(
-        "  Tasa Falsos Positivos (FPR): {:.2}% (Objetivo <= 1.0%)",
-        fpr
+        "  Total evaluados:             {}",
+        samples.len() - excluded_samples.len()
     );
-    println!("  Precisión (PPV):             {:.2}%", precision);
-    println!("  Exactitud Global:            {:.2}%", accuracy);
+    if !excluded_samples.is_empty() {
+        println!(
+            "  Total excluidos auditados:   {}",
+            excluded_samples.len()
+        );
+    }
+    println!("  Casos Inconclusos:           {}", inconclusive);
+    println!("\n  [1] FRONTERA ESTRICTA (ProbableTranscode, LLR >= +4.0):");
+    println!("    Verdaderos Positivos (TP):   {}", tp_strict);
+    println!("    Falsos Negativos (FN):       {}", fn_strict);
+    println!("    Verdaderos Negativos (TN):   {}", tn_strict);
+    println!("    Falsos Positivos (FP):       {}", fp_strict);
+    let n_neg_strict = fp_strict + tn_strict;
+    let bound_95_strict = if n_neg_strict > 0 {
+        (3.0 / n_neg_strict as f64) * 100.0
+    } else {
+        100.0
+    };
+    if fp_strict == 0 && n_neg_strict < 300 {
+        println!(
+            "    Tasa Falsos Positivos (FPR): {:.2}% [Cota sup. 95%: <= {:.2}% con N={}] (Objetivo <= 1.0% requiere N >= 300)",
+            fpr_strict, bound_95_strict, n_neg_strict
+        );
+    } else {
+        println!(
+            "    Tasa Falsos Positivos (FPR): {:.2}% (Objetivo <= 1.0%)",
+            fpr_strict
+        );
+    }
+    println!("    Precisión (PPV):             {:.2}%", precision_strict);
+    println!("\n  [2] FRONTERA PERMISIVA (Suspicious o superior, LLR >= +1.5):");
+    println!("    Verdaderos Positivos (TP):   {}", tp_perm);
+    println!("    Falsos Negativos (FN):       {}", fn_perm);
+    println!("    Verdaderos Negativos (TN):   {}", tn_perm);
+    println!("    Falsos Positivos (FP):       {}", fp_perm);
+    println!("    Sensibilidad / Recall:       {:.2}%", recall_perm);
+    let n_neg_perm = fp_perm + tn_perm;
+    let bound_95_perm = if n_neg_perm > 0 {
+        (3.0 / n_neg_perm as f64) * 100.0
+    } else {
+        100.0
+    };
+    if fp_perm == 0 && n_neg_perm < 300 {
+        println!(
+            "    Tasa Falsos Positivos (FPR): {:.2}% [Cota sup. 95%: <= {:.2}% con N={}] (Objetivo <= 1.0% requiere N >= 300)",
+            fpr_perm, bound_95_perm, n_neg_perm
+        );
+    } else {
+        println!(
+            "    Tasa Falsos Positivos (FPR): {:.2}% (Objetivo <= 1.0%)",
+            fpr_perm
+        );
+    }
+    println!("    Precisión (PPV):             {:.2}%", precision_perm);
+    println!("    Exactitud Global:            {:.2}%", accuracy_perm);
+
+    if !variant_stats.is_empty() {
+        println!("\n  [3] DESGLOSE DE RECALL POR VARIANTE / BITRATE:");
+        println!(
+            "    {:<18} {:>8}   {:>15}   {:>15}   {:>12}",
+            "Variante", "Muestras", "Recall Estricto", "Recall Permisivo", "Inconclusos"
+        );
+        println!(
+            "    {:-<18} {:-<8}   {:-<15}   {:-<15}   {:-<12}",
+            "", "", "", "", ""
+        );
+        for (var_name, stats) in &variant_stats {
+            let r_strict = if stats.total > 0 {
+                (stats.tp_strict as f64) / (stats.total as f64) * 100.0
+            } else {
+                0.0
+            };
+            let r_perm = if stats.total > 0 {
+                (stats.tp_perm as f64) / (stats.total as f64) * 100.0
+            } else {
+                0.0
+            };
+            println!(
+                "    {:<18} {:>8}   {:>14.1}%   {:>14.1}%   {:>12}",
+                var_name, stats.total, r_strict, r_perm, stats.inconclusive
+            );
+        }
+    }
+
+    if !master_stats.is_empty() {
+        let failing_masters: Vec<(&String, &MasterStats)> = master_stats
+            .iter()
+            .filter(|(_, st)| {
+                (st.lossless_evaluated && !st.lossless_ok)
+                    || st.transcodes_strict_tp < st.transcodes_total
+                    || st.transcodes_perm_tp < st.transcodes_total
+            })
+            .collect();
+
+        println!("\n  [4] DESGLOSE POR MÁSTER (MÁSTERS CON CASOS DIFÍCILES O FALLOS):");
+        if failing_masters.is_empty() {
+            println!(
+                "    Todos los másters evaluados ({}) obtuvieron 100% de detección en sus variantes sin falsos positivos.",
+                master_stats.len()
+            );
+        } else {
+            println!(
+                "    {:<35} {:>14}   {:>14}   {:<35}",
+                "Máster Origen", "Cazados (Est)", "Cazados (Perm)", "Detalle de Fallos"
+            );
+            println!("    {:-<35} {:-<14}   {:-<14}   {:-<35}", "", "", "", "");
+            for (m_name, st) in failing_masters {
+                let ratio_strict = format!("{}/{}", st.transcodes_strict_tp, st.transcodes_total);
+                let ratio_perm = format!("{}/{}", st.transcodes_perm_tp, st.transcodes_total);
+                let mut failure_notes = Vec::new();
+                if st.lossless_evaluated && !st.lossless_ok {
+                    failure_notes.push(format!("FP en máster (LLR={:.2})", st.lossless_llr));
+                }
+                if !st.missed_variants_perm.is_empty() {
+                    failure_notes
+                        .push(format!("Miss perm: {}", st.missed_variants_perm.join(", ")));
+                } else if st.transcodes_strict_tp < st.transcodes_total {
+                    failure_notes.push("Solo falló en estricto".to_string());
+                }
+                println!(
+                    "    {:<35} {:>14}   {:>14}   {:<35}",
+                    m_name,
+                    ratio_strict,
+                    ratio_perm,
+                    failure_notes.join(" | ")
+                );
+            }
+        }
+    }
+
+    if !excluded_samples.is_empty() {
+        println!("\n  [5] ARCHIVOS EXCLUIDOS POR PROCEDENCIA AUDITADA (NO ENTRAN A FPR/RECALL):");
+        println!(
+            "    {:<35} {:<20} {:>7}   {:<22}   {:<35}",
+            "Archivo", "Procedencia", "LLR", "Veredicto", "Diagnóstico del Motor"
+        );
+        println!(
+            "    {:-<35} {:-<20} {:-<7}   {:-<22}   {:-<35}",
+            "", "", "", "", ""
+        );
+        for ex in &excluded_samples {
+            let filename = ex.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let prov_str = match ex.provenance {
+                Provenance::LossyConfirmed => "lossy_confirmed",
+                Provenance::ProvenanceUnknown => "provenance_unknown",
+                _ => "otro",
+            };
+            println!(
+                "    {:<35} {:<20} {:>+7.2}   {:<22}   {:<35}",
+                filename,
+                prov_str,
+                ex.score_llr,
+                format!("{:?}", ex.verdict),
+                ex.summary
+            );
+        }
+    }
+
+    println!("------------------------------------------------------------");
     println!("  Tiempo transcurrido:         {:.2?}", elapsed);
     println!("------------------------------------------------------------");
 
-    if fpr <= 1.0 && recall >= 95.0 {
-        println!("  [GATE STATUS: PASS] El motor cumple las tolerancias forenses requeridas.");
+    if fpr_strict <= 1.0 && recall_strict >= 95.0 && n_neg_strict >= 300 {
+        println!("  [GATE STATUS: PASS] El motor cumple las tolerancias en frontera estricta (Recall >= 95.0%, FPR <= 1.0% con N >= 300).");
     } else {
-        println!("  [GATE STATUS: FAIL] El motor no alcanza los criterios de producción (FPR <= 1.0%, Recall >= 95.0%).");
+        let n_note = if n_neg_strict < 300 {
+            format!(" [N_neg={} insuficiente para certificar FPR <= 1.0%]", n_neg_strict)
+        } else {
+            String::new()
+        };
+        println!(
+            "  [GATE STATUS: FAIL] El motor no alcanza el objetivo de producción en frontera estricta (Recall estricto: {:.2}% vs >= 95.0%, FPR: {:.2}% vs <= 1.0%){}.",
+            recall_strict, fpr_strict, n_note
+        );
     }
     println!("============================================================");
+
+    if sweep_drop {
+        run_sweep_drop_analysis(&samples);
+    }
 }
 
-fn run_calibrate(target_desc: &str, samples: Vec<CorpusSample>) {
+fn run_calibrate(target_desc: &str, samples: Vec<CorpusSample>, sweep_drop: bool) {
     println!("============================================================");
     println!(" BDJ STUDIO AUDIO ANALYZER — CALIBRACIÓN FORENSE DE CORPUS");
     println!("============================================================");
@@ -573,9 +949,17 @@ fn run_calibrate(target_desc: &str, samples: Vec<CorpusSample>) {
 
     let mut lossless_scores: Vec<f64> = Vec::new();
     let mut transcode_scores: Vec<f64> = Vec::new();
+    let mut excluded_count = 0usize;
 
     let start = Instant::now();
     for s in &samples {
+        if s.provenance == Provenance::LossyConfirmed
+            || s.provenance == Provenance::ProvenanceUnknown
+        {
+            excluded_count += 1;
+            continue;
+        }
+
         if let Ok(report) = bdja_scan::analyze_single_file(&s.path) {
             if s.is_transcode {
                 transcode_scores.push(report.score_llr);
@@ -583,6 +967,13 @@ fn run_calibrate(target_desc: &str, samples: Vec<CorpusSample>) {
                 lossless_scores.push(report.score_llr);
             }
         }
+    }
+
+    if excluded_count > 0 {
+        println!(
+            "  [Procedencia] {} archivos excluidos de la calibración por auditoría de procedencia (lossy_confirmed / provenance_unknown).",
+            excluded_count
+        );
     }
 
     if lossless_scores.is_empty() || transcode_scores.is_empty() {
@@ -680,7 +1071,7 @@ fn run_calibrate(target_desc: &str, samples: Vec<CorpusSample>) {
         "Media aritmética", mean_lossless, mean_transcode
     );
     println!(
-        "{:<20} | {:<22.2} | {:<22.2}",
+        "{:<20} | {:<+22.2} | {:<+22.2}",
         "Desviación estándar", sd_lossless, sd_transcode
     );
     let delta_p50 = p_transcode[3] - p_lossless[3];
@@ -752,10 +1143,22 @@ fn run_calibrate(target_desc: &str, samples: Vec<CorpusSample>) {
     println!("\nOPTIMIZACIÓN FORENSE DE UMBRAL:");
     println!("  Umbral óptimo (T*):          {:+.2} LLR", best_threshold);
     println!("  Sensibilidad / Recall:       {:.2}%", best_recall);
-    println!(
-        "  Tasa Falsos Positivos (FPR): {:.2}% (Objetivo <= 1.0%)",
-        best_fpr
-    );
+    let bound_95_cal = if n_lossless > 0 {
+        (3.0 / n_lossless as f64) * 100.0
+    } else {
+        100.0
+    };
+    if best_fpr == 0.0 && n_lossless < 300 {
+        println!(
+            "  Tasa Falsos Positivos (FPR): {:.2}% [Cota sup. 95%: <= {:.2}% con N={}] (Objetivo <= 1.0% requiere N >= 300)",
+            best_fpr, bound_95_cal, n_lossless
+        );
+    } else {
+        println!(
+            "  Tasa Falsos Positivos (FPR): {:.2}% (Objetivo <= 1.0%)",
+            best_fpr
+        );
+    }
     println!("  Precisión (PPV):             {:.2}%", best_precision);
 
     println!("\nUMBRALES RECOMENDADOS PARA PRODUCCIÓN:");
@@ -787,8 +1190,168 @@ fn run_calibrate(target_desc: &str, samples: Vec<CorpusSample>) {
     println!("Tiempo de análisis: {:.2?}", start.elapsed());
     println!("============================================================");
 
+    if sweep_drop {
+        run_sweep_drop_analysis(&samples);
+    }
+
     if !is_pass && std::env::var("BDJA_STRICT_GATE").is_ok() {
         std::process::exit(1);
+    }
+}
+
+fn run_sweep_drop_analysis(samples: &[CorpusSample]) {
+    println!("\n------------------------------------------------------------");
+    println!(" [HISTOGRAMA Y BARRIDO DE CAÍDAS ESPECTRALES (14–21.5 kHz)]");
+    println!("------------------------------------------------------------");
+
+    let mut inconclusos_drops: Vec<(String, f64, f64, u32)> = Vec::new();
+    let mut detected_drops: Vec<(String, f64, f64, u32)> = Vec::new();
+    let mut lossless_drops: Vec<(String, f64, f64, u32)> = Vec::new();
+
+    println!("  Midiendo caídas espectrales y pendientes...");
+    for s in samples {
+        if s.provenance != Provenance::Transcode && s.provenance != Provenance::Lossless {
+            continue;
+        }
+
+        let rep = match bdja_scan::analyze_single_file(&s.path) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let points = match bdja_scan::inspect_file_spectral_drops(&s.path) {
+            Ok(pts) => pts,
+            Err(_) => continue,
+        };
+
+        let filename = s
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let band_points: Vec<&bdja_dsp::SpectralDropPoint> = points
+            .iter()
+            .filter(|p| p.freq_hz >= 14_000.0 && p.freq_hz <= 21_500.0)
+            .collect();
+
+        let max_pt = band_points.iter().cloned().max_by(|a, b| {
+            a.drop_db
+                .partial_cmp(&b.drop_db)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let (drop, slope, freq) = if let Some(pt) = max_pt {
+            (pt.drop_db, pt.slope_db_oct, pt.freq_hz.round() as u32)
+        } else {
+            (0.0, 0.0, 0)
+        };
+
+        if s.provenance == Provenance::Transcode {
+            if rep.verdict == bdja_core::types::Verdict::Inconclusive
+                || rep.verdict == bdja_core::types::Verdict::LikelyLossless
+                || rep.verdict == bdja_core::types::Verdict::LosslessVerified
+            {
+                inconclusos_drops.push((filename, drop, slope, freq));
+            } else {
+                detected_drops.push((filename, drop, slope, freq));
+            }
+        } else if s.provenance == Provenance::Lossless {
+            lossless_drops.push((filename, drop, slope, freq));
+        }
+    }
+
+    let bins: &[(f64, f64, &str)] = &[
+        (0.0, 6.0, "< 6.0 dB"),
+        (6.0, 7.0, "6.0 - 7.0 dB"),
+        (7.0, 8.0, "7.0 - 8.0 dB"),
+        (8.0, 9.0, "8.0 - 9.0 dB"),
+        (9.0, 10.0, "9.0 - 10.0 dB"),
+        (10.0, 11.0, "10.0 - 11.0 dB"),
+        (11.0, 12.0, "11.0 - 12.0 dB"),
+        (12.0, 13.0, "12.0 - 13.0 dB"),
+        (13.0, 14.0, "13.0 - 14.0 dB"),
+        (14.0, 15.0, "14.0 - 15.0 dB"),
+        (15.0, 17.0, "15.0 - 17.0 dB"),
+        (17.0, 100.0, ">= 17.0 dB"),
+    ];
+
+    println!("\n  [HISTOGRAMA DE CAÍDAS MÁXIMAS EN BANDA 14–21.5 kHz]:");
+    println!(
+        "    {:<16} {:>24} {:>20} {:>20}",
+        "Rango de Caída",
+        format!("Inconclusos ({})", inconclusos_drops.len()),
+        format!("Detectados ({})", detected_drops.len()),
+        format!("Lossless ({})", lossless_drops.len())
+    );
+    println!(
+        "    {:-<16} {:-<24} {:-<20} {:-<20}",
+        "", "", "", ""
+    );
+
+    for &(low, high, label) in bins {
+        let inc_c = inconclusos_drops
+            .iter()
+            .filter(|(_, d, _, _)| *d >= low && *d < high)
+            .count();
+        let det_c = detected_drops
+            .iter()
+            .filter(|(_, d, _, _)| *d >= low && *d < high)
+            .count();
+        let los_c = lossless_drops
+            .iter()
+            .filter(|(_, d, _, _)| *d >= low && *d < high)
+            .count();
+        println!(
+            "    {:<16} {:>24} {:>20} {:>20}",
+            label, inc_c, det_c, los_c
+        );
+    }
+
+    println!("\n  [BARRIDO DE UMBRAL min_drop (SIMULACIÓN DE CAPTURA EN 14–21.5 kHz)]:");
+    println!(
+        "    {:<12} {:>22} {:>20} {:>18}",
+        "min_drop", "Inconclusos Cazables", "Falsos Positivos", "Margen"
+    );
+    println!("    {:-<12} {:-<22} {:-<20} {:-<18}", "", "", "", "");
+
+    let thresholds = [8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0];
+    for &th in &thresholds {
+        let inc_caught = inconclusos_drops
+            .iter()
+            .filter(|(_, d, _, _)| *d >= th)
+            .count();
+        let los_fp = lossless_drops
+            .iter()
+            .filter(|(_, d, _, _)| *d >= th)
+            .count();
+        let verdict = if los_fp == 0 {
+            "LIMPIO (0 FP)".to_string()
+        } else {
+            format!("RIESGO ({} FP)", los_fp)
+        };
+        println!(
+            "    {:<12.1} {:>22} {:>20} {:>18}",
+            th, inc_caught, los_fp, verdict
+        );
+    }
+
+    lossless_drops.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    println!("\n  [TOP CAÍDAS ESPECTRALES EN LOSSLESS CONFIRMADOS (PISO DE MÁSTER)]:");
+    for (name, drop, slope, freq) in lossless_drops.iter().take(5) {
+        println!(
+            "    * {:<38} Caída: {:>5.1} dB a {:>5} Hz (Pendiente: {:>5.1} dB/oct)",
+            name, drop, freq, slope
+        );
+    }
+
+    inconclusos_drops.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    println!("\n  [TOP CAÍDAS EN TRANSCODES INCONCLUSOS (POTENCIALES CAZADOS)]:");
+    for (name, drop, slope, freq) in inconclusos_drops.iter().take(8) {
+        println!(
+            "    * {:<38} Caída: {:>5.1} dB a {:>5} Hz (Pendiente: {:>5.1} dB/oct)",
+            name, drop, freq, slope
+        );
     }
 }
 
@@ -817,13 +1380,13 @@ fn main() {
         }
         "validate" => {
             if args.len() < 3 {
-                eprintln!("Uso: bdja_cli validate <corpus_dir|manifiesto.csv>");
-                eprintln!("     bdja_cli validate --manifest <manifiesto.csv>");
-                eprintln!("     bdja_cli validate --lossless-dir <dir> --transcode-dir <dir>");
+                eprintln!("Uso: bdja_cli validate <corpus_dir|manifiesto.csv> [--sweep-drop]");
+                eprintln!("     bdja_cli validate --manifest <manifiesto.csv> [--sweep-drop]");
+                eprintln!("     bdja_cli validate --lossless-dir <dir> --transcode-dir <dir> [--sweep-drop]");
                 return;
             }
             match parse_corpus_args(&args[2..]) {
-                Ok((desc, samples)) => run_validate(&desc, samples),
+                Ok((desc, samples, sweep_drop)) => run_validate(&desc, samples, sweep_drop),
                 Err(e) => {
                     eprintln!("Error en parámetros de validación: {}", e);
                     std::process::exit(1);
@@ -832,13 +1395,13 @@ fn main() {
         }
         "calibrate" => {
             if args.len() < 3 {
-                eprintln!("Uso: bdja_cli calibrate <corpus_dir|manifiesto.csv>");
-                eprintln!("     bdja_cli calibrate --manifest <manifiesto.csv>");
-                eprintln!("     bdja_cli calibrate --lossless-dir <dir> --transcode-dir <dir>");
+                eprintln!("Uso: bdja_cli calibrate <corpus_dir|manifiesto.csv> [--sweep-drop]");
+                eprintln!("     bdja_cli calibrate --manifest <manifiesto.csv> [--sweep-drop]");
+                eprintln!("     bdja_cli calibrate --lossless-dir <dir> --transcode-dir <dir> [--sweep-drop]");
                 return;
             }
             match parse_corpus_args(&args[2..]) {
-                Ok((desc, samples)) => run_calibrate(&desc, samples),
+                Ok((desc, samples, sweep_drop)) => run_calibrate(&desc, samples, sweep_drop),
                 Err(e) => {
                     eprintln!("Error en parámetros de calibración: {}", e);
                     std::process::exit(1);

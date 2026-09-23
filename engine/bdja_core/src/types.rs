@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Versión / revisión del motor de análisis y veredicto.
 /// Si cambia, las cachés anteriores se invalidan automáticamente.
-pub const ENGINE_REV: u32 = 1;
+pub const ENGINE_REV: u32 = 2;
 
 /// Los 6 estados de veredicto oficiales del motor (§08 de PLAN_ARQUITECTURA.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -234,11 +234,58 @@ pub struct FileReport {
     pub score_llr: f64,
     pub effective_bandwidth_hz: Option<u32>,
     pub cutoff_slope_db_oct: Option<f64>,
+    pub cutoff_kind: Option<CutoffKind>,
     pub evidences: Vec<Evidence>,
     pub quality: QualityMetrics,
     pub guards_triggered: Vec<String>,
     pub verdict_summary: String,
     pub average_spectrum_db: Vec<f32>,
+}
+
+impl FileReport {
+    pub fn empty() -> Self {
+        Self {
+            file_id: 0,
+            path: String::new(),
+            file_size: 0,
+            engine_rev: ENGINE_REV,
+            facts: FormatFacts {
+                container: String::new(),
+                codec: String::new(),
+                codec_type: Codec::Unknown,
+                sample_rate: 0,
+                bit_depth: None,
+                channels: 0,
+                duration_ms: 0,
+                container_bitrate_kbps: None,
+                is_lossless_declared: false,
+            },
+            verdict: Verdict::Inconclusive,
+            confidence: 0.0,
+            score_llr: 0.0,
+            effective_bandwidth_hz: None,
+            cutoff_slope_db_oct: None,
+            cutoff_kind: None,
+            evidences: Vec::new(),
+            quality: QualityMetrics {
+                true_peak_dbtp: None,
+                lufs_integrated: None,
+                clipped_samples: 0,
+                dc_offset: None,
+                dynamic_range_db: None,
+                stereo_correlation: None,
+            },
+            guards_triggered: Vec::new(),
+            verdict_summary: String::new(),
+            average_spectrum_db: vec![-120.0; 256],
+        }
+    }
+}
+
+impl Default for FileReport {
+    fn default() -> Self {
+        Self::empty()
+    }
 }
 
 /// Información de una unidad de almacenamiento del sistema.
@@ -300,4 +347,70 @@ pub struct EngineInfo {
     pub revision: u32,
     pub data_dir: String,
     pub status: String,
+}
+
+/// Especificación canónica de pesos y roles de evidencia de la revisión actual del motor (§08 PLAN_ARQUITECTURA.md).
+/// Vinculada estrictamente a ENGINE_REV: cualquier cambio en esta tabla exige incrementar ENGINE_REV
+/// para forzar la invalidación de reportes obsoletos en SQLite.
+pub const ENGINE_WEIGHTS_SPEC: &[(&str, bool, i32, i32)] = &[
+    // (código_evidencia, es_fuerte, min_llr_centésimas, max_llr_centésimas)
+    ("E01", true, -180, 220),
+    ("E02", false, -100, 150),
+    ("E03", false, 0, 80),
+    ("E04", true, -140, 150),
+    ("E05", false, 0, 100),
+    ("E06", false, 0, 60),
+    ("E07", true, 0, 240),
+    ("E08", false, -80, 0),
+    ("E09", false, 0, 120),
+    ("E10", false, 0, 150),
+    ("E11", false, 0, 80),
+    ("E12", false, 0, 0),
+    ("E13", true, 0, 350),
+    ("E14", false, 0, 50),
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compute_spec_hash() -> u64 {
+        let mut hash = 0xcbf29ce484222325u64;
+        for &(code, strong, min_llr, max_llr) in ENGINE_WEIGHTS_SPEC {
+            for &b in code.as_bytes() {
+                hash ^= b as u64;
+                hash = hash.wrapping_mul(0x100000001b3);
+            }
+            hash ^= strong as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+            hash ^= min_llr as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+            hash ^= max_llr as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    #[test]
+    fn test_engine_rev_is_synchronized_with_weights_hash() {
+        let spec_hash = compute_spec_hash();
+
+        // B-12 / Auditoría: Un simple `assert!(ENGINE_REV >= 2)` no previene olvidos futuros si
+        // alguien cambia pesos o heurística sin incrementar ENGINE_REV.
+        // Este test asegura que ENGINE_REV sea exactamente 2 para la especificación actual de pesos.
+        // Si la tabla de pesos cambia, el hash cambiará y la prueba fallará, recordando obligatoriamente
+        // incrementar ENGINE_REV y actualizar EXPECTED_SPEC_HASH_REV.
+        const EXPECTED_ENGINE_REV: u32 = 2;
+        assert_eq!(
+            ENGINE_REV, EXPECTED_ENGINE_REV,
+            "ENGINE_REV ({}) no coincide con la versión esperada ({}) para la especificación actual",
+            ENGINE_REV, EXPECTED_ENGINE_REV
+        );
+
+        const EXPECTED_SPEC_HASH_REV2: u64 = 0x3916e18a4b583491;
+        assert_eq!(
+            spec_hash, EXPECTED_SPEC_HASH_REV2,
+            "La tabla de pesos de ENGINE_WEIGHTS_SPEC ha cambiado. Si modificaste evidencias o pesos, incrementa ENGINE_REV para invalidar la caché persistente y actualiza EXPECTED_SPEC_HASH_REV2."
+        );
+    }
 }

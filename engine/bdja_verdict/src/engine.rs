@@ -57,10 +57,9 @@ pub fn evaluate_verdict(
         Verdict::Inconclusive
     } else if score_llr < 1.5 {
         Verdict::Inconclusive
-    } else if score_llr < 4.0 || !is_strong_evidence_present || has_guards {
+    } else if score_llr < 4.0 || !is_strong_evidence_present {
         // Strong Evidence Gate Rule:
-        // Cannot reach ProbableTranscode without at least one strong evidence (E04, E05, E07, E13)
-        // and cannot convict if false positive guards are active.
+        // Cannot reach ProbableTranscode without score >= 4.0 and at least one strong evidence (E01, E04, E07, E13).
         Verdict::Suspicious
     } else {
         Verdict::ProbableTranscode
@@ -71,7 +70,14 @@ pub fn evaluate_verdict(
     let sigmoid = 1.0 / (1.0 + (-0.6 * abs_score).exp());
     let confidence = match verdict {
         Verdict::DeclaredLossy => 0.99,
-        Verdict::ProbableTranscode => (0.85 + 0.14 * (sigmoid - 0.5) * 2.0).clamp(0.85, 0.99),
+        Verdict::ProbableTranscode => {
+            let base = (0.85 + 0.14 * (sigmoid - 0.5) * 2.0).clamp(0.85, 0.99);
+            if has_guards {
+                (base - 0.12).clamp(0.70, 0.88)
+            } else {
+                base
+            }
+        }
         Verdict::LosslessVerified => (0.85 + 0.14 * (sigmoid - 0.5) * 2.0).clamp(0.85, 0.99),
         Verdict::LikelyLossless => (0.70 + 0.15 * (sigmoid - 0.5) * 2.0).clamp(0.70, 0.85),
         Verdict::Suspicious => (0.65 + 0.18 * (sigmoid - 0.5) * 2.0).clamp(0.65, 0.84),

@@ -139,3 +139,49 @@ fn test_guards_prevent_conviction() {
     // With guards active and no strong evidence, must be Inconclusive
     assert_eq!(res.verdict, Verdict::Inconclusive);
 }
+
+#[test]
+fn test_guard_does_not_veto_conviction_when_strong_evidence_present() {
+    let facts = FormatFacts {
+        container: "WAV".to_string(),
+        codec: "PCM 16-bit LE".to_string(),
+        codec_type: Codec::PcmS16Le,
+        sample_rate: 44100,
+        bit_depth: Some(16),
+        channels: 2,
+        duration_ms: 12000, // Short track (< 20s)
+        container_bitrate_kbps: Some(1411),
+        is_lossless_declared: true,
+    };
+
+    let evidences = vec![
+        Evidence {
+            code: EvidenceCode::E01,
+            value: Some(16000.0),
+            llr: 2.2,
+            applicable: true,
+            description: "Brickwall Cutoff at 16k".to_string(),
+        },
+        Evidence {
+            code: EvidenceCode::E11,
+            value: Some(1.0),
+            llr: 1.8,
+            applicable: true,
+            description: "Inflated container".to_string(),
+        },
+        Evidence {
+            code: EvidenceCode::E03,
+            value: Some(20.0),
+            llr: 1.2,
+            applicable: true,
+            description: "Shelf step".to_string(),
+        },
+    ];
+
+    let guards = vec!["Duracion corta (< 20 s)".to_string()];
+    let res_without_guard = evaluate_verdict(&facts, &evidences, &[], true);
+    let res_with_guard = evaluate_verdict(&facts, &evidences, &guards, true);
+
+    assert_eq!(res_with_guard.verdict, Verdict::ProbableTranscode);
+    assert!(res_with_guard.confidence < res_without_guard.confidence);
+}

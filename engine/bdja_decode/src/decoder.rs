@@ -101,7 +101,8 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
     let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    let ext_opt = path.extension().and_then(|e| e.to_str());
+    if let Some(ext) = ext_opt {
         hint.with_extension(ext);
     }
 
@@ -110,7 +111,21 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
 
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &fmt_opts, &meta_opts)
-        .map_err(|e| DecodeError::UnrecognizedFormat(e.to_string()))?;
+        .map_err(|e| match e {
+            SymphoniaError::IoError(io_err) => DecodeError::Io(io_err),
+            SymphoniaError::DecodeError(msg) => DecodeError::CorruptedHeader(msg.to_string()),
+            SymphoniaError::Unsupported(msg) => {
+                // Si Symphonia devuelve "unsupported format", ningún demuxer reconoció la cabecera del contenedor.
+                // Si el mensaje proviene de un lector específico (ej. "wav: unsupported wave format"),
+                // el contenedor SÍ fue reconocido pero el códec/etiqueta interna no está implementado en Symphonia.
+                if msg == "unsupported format" || msg.contains("no format reader") {
+                    DecodeError::UnrecognizedFormat(msg.to_string())
+                } else {
+                    DecodeError::Unsupported(msg.to_string())
+                }
+            }
+            _ => DecodeError::UnrecognizedFormat(e.to_string()),
+        })?;
 
     let mut format = probed.format;
 
@@ -160,7 +175,12 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     let dec_opts = DecoderOptions::default();
     let mut decoder = symphonia::default::get_codecs()
         .make(&codec_params, &dec_opts)
-        .map_err(|e| DecodeError::DecoderInit(e.to_string()))?;
+        .map_err(|e| match e {
+            SymphoniaError::Unsupported(msg) => DecodeError::Unsupported(msg.to_string()),
+            SymphoniaError::DecodeError(msg) => DecodeError::CorruptedHeader(msg.to_string()),
+            SymphoniaError::IoError(io_err) => DecodeError::Io(io_err),
+            _ => DecodeError::DecoderInit(e.to_string()),
+        })?;
 
     let mut left_samples = Vec::with_capacity(WINDOW_SIZE_FINE * 24);
     let mut right_samples = Vec::with_capacity(WINDOW_SIZE_FINE * 24);
@@ -184,7 +204,7 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
 
             if format
                 .seek(
-                    SeekMode::Coarse,
+                    SeekMode::Accurate,
                     SeekTo::TimeStamp {
                         ts: target_frame,
                         track_id,

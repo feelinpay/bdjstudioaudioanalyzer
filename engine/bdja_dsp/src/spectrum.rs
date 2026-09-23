@@ -89,20 +89,22 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
 
         // Banda posterior: adaptativa según si estamos en la zona de corte de MP3 320 / Nyquist de máster (18.5k - 23.5k)
         // o en el rango medio/estándar.
-        let (post_start, post_end, min_drop) =
+        // NOTA METODOLÓGICA (Opción A): min_drop 12.5 / 15.0 dB es provisional-ajustado-sobre-n=14.
+        // Umbrales congelados para la evaluación ciega sobre los 300 negativos de música real.
+        let (post_start, post_end, min_drop, min_slope) =
             if (18_500.0..=23_500.0).contains(&f_b) || remaining_hz < 3000.0 {
                 let trans_margin_hz = (remaining_hz * 0.35).clamp(180.0, 450.0);
                 let trans_bins = ((trans_margin_hz / bin_hz).round() as usize).max(2);
                 let p_start = (b + trans_bins).min(n_bins - 1);
                 let post_span_hz = remaining_hz.min(2500.0);
                 let p_end = n_bins.min(p_start + ((post_span_hz / bin_hz).round() as usize).max(4));
-                (p_start, p_end, 13.0)
+                (p_start, p_end, 12.5, 52.0)
             } else {
                 let post_win_hz = step_hz.min(remaining_hz * 0.75).max(350.0);
                 let win_bins = ((post_win_hz / bin_hz).round() as usize).max(4);
                 let p_start = b;
                 let p_end = (b + win_bins).min(n_bins);
-                (p_start, p_end, 17.0)
+                (p_start, p_end, 15.0, 42.0)
             };
 
         if b_start < b && post_start < post_end.saturating_sub(2) {
@@ -125,8 +127,10 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
                 let octaves = (f2 / f1).log2().max(0.1);
                 let slope = drop / octaves;
 
-                detected_cliff = Some((b, drop, slope));
-                break; // Tomar el primer corte artificial verificado
+                if slope >= min_slope {
+                    detected_cliff = Some((b, drop, slope));
+                    break; // Tomar el primer corte artificial verificado
+                }
             }
         }
     }
@@ -261,28 +265,38 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
         }
     };
 
-    // 3. E03: 16 kHz Shelf (drop between 14-16 kHz and 16-18 kHz)
-    let bin_14k = ((14000.0 / bin_hz) as usize).min(n_bins - 1);
-    let bin_16k = ((16000.0 / bin_hz) as usize).min(n_bins - 1);
-    let bin_18k = ((18000.0 / bin_hz) as usize).min(n_bins - 1);
-
+    // 3. E03: Shelf / escalón relativo al corte detectado:
+    // [corte - 2.5 kHz, corte - 0.5 kHz] contra [corte + 0.5 kHz, corte + 2.5 kHz]
     let mut shelf_16k_drop_db = 0.0;
-    if bin_14k < bin_16k && bin_16k < bin_18k {
-        let p_14_16: f64 = avg_power[bin_14k..bin_16k]
-            .iter()
-            .map(|&p| p as f64)
-            .sum::<f64>()
-            / (bin_16k - bin_14k) as f64;
-        let p_16_18: f64 = avg_power[bin_16k..bin_18k]
-            .iter()
-            .map(|&p| p as f64)
-            .sum::<f64>()
-            / (bin_18k - bin_16k) as f64;
+    if cutoff_kind != CutoffKind::FullSpectrum && cutoff_bin > 0 {
+        let f_cut = cutoff_bin as f64 * bin_hz;
+        let f_low_start = (f_cut - 2500.0).max(500.0);
+        let f_low_end = (f_cut - 500.0).max(f_low_start + 200.0);
+        let f_high_start = (f_cut + 500.0).min(nyquist - 200.0);
+        let f_high_end = (f_cut + 2500.0).min(nyquist);
 
-        if p_14_16 > 1e-12 {
-            let db_14_16 = 10.0 * (p_14_16 + 1e-12).log10();
-            let db_16_18 = 10.0 * (p_16_18 + 1e-12).log10();
-            shelf_16k_drop_db = (db_14_16 - db_16_18).max(0.0);
+        let bin_low_start = ((f_low_start / bin_hz) as usize).min(n_bins - 1);
+        let bin_low_end = ((f_low_end / bin_hz) as usize).min(n_bins - 1);
+        let bin_high_start = ((f_high_start / bin_hz) as usize).min(n_bins - 1);
+        let bin_high_end = ((f_high_end / bin_hz) as usize).min(n_bins - 1);
+
+        if bin_low_start < bin_low_end && bin_high_start < bin_high_end {
+            let p_low: f64 = avg_power[bin_low_start..bin_low_end]
+                .iter()
+                .map(|&p| p as f64)
+                .sum::<f64>()
+                / (bin_low_end - bin_low_start) as f64;
+            let p_high: f64 = avg_power[bin_high_start..bin_high_end]
+                .iter()
+                .map(|&p| p as f64)
+                .sum::<f64>()
+                / (bin_high_end - bin_high_start) as f64;
+
+            if p_low > 1e-12 {
+                let db_low = 10.0 * (p_low + 1e-12).log10();
+                let db_high = 10.0 * (p_high + 1e-12).log10();
+                shelf_16k_drop_db = (db_low - db_high).max(0.0);
+            }
         }
     }
 
@@ -335,9 +349,9 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
     let chunk_size = (n_bins / display_points).max(1);
 
     for chunk in avg_power.chunks(chunk_size) {
-        let max_p = chunk.iter().cloned().fold(0.0f32, f32::max);
-        let db = if max_p > 1e-12 {
-            10.0 * max_p.log10()
+        let mean_p = chunk.iter().sum::<f32>() / chunk.len() as f32;
+        let db = if mean_p > 1e-12 {
+            10.0 * mean_p.log10()
         } else {
             -120.0
         };
@@ -361,4 +375,123 @@ pub fn analyze_spectrum(power_spectra: &[Vec<f32>], sample_rate: u32) -> Spectru
         upsampling_detected,
         average_spectrum_db,
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct SpectralDropPoint {
+    pub freq_hz: f64,
+    pub drop_db: f64,
+    pub slope_db_oct: f64,
+    pub db_before: f64,
+    pub db_post: f64,
+}
+
+pub fn measure_spectral_drops(
+    power_spectra: &[Vec<f32>],
+    sample_rate: u32,
+) -> Vec<SpectralDropPoint> {
+    if power_spectra.is_empty() {
+        return Vec::new();
+    }
+
+    let n_bins = power_spectra[0].len();
+    let n_windows = power_spectra.len() as f32;
+
+    let mut avg_power = vec![0.0f32; n_bins];
+    for spec in power_spectra {
+        for (i, &p) in spec.iter().enumerate() {
+            if i < n_bins {
+                avg_power[i] += p / n_windows;
+            }
+        }
+    }
+
+    let bin_hz = sample_rate as f64 / ((n_bins - 1) * 2) as f64;
+    let nyquist = sample_rate as f64 / 2.0;
+
+    let db_spectrum: Vec<f64> = avg_power
+        .iter()
+        .map(|&p| 10.0 * (p as f64 + 1e-12).log10())
+        .collect();
+
+    let mut smoothed_db = vec![-120.0; n_bins];
+    for (i, val) in smoothed_db.iter_mut().enumerate().take(n_bins) {
+        let start = i.saturating_sub(2);
+        let end = (i + 3).min(n_bins);
+        let sum: f64 = db_spectrum[start..end].iter().sum();
+        *val = sum / (end - start) as f64;
+    }
+
+    let bin_1k = ((1000.0 / bin_hz) as usize).clamp(1, n_bins - 1);
+    let bin_6k = ((6000.0 / bin_hz) as usize).clamp(bin_1k + 1, n_bins - 1);
+    let ref_level = smoothed_db[bin_1k..bin_6k]
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    let step_hz = 1200.0;
+    let base_win_bins = ((step_hz / bin_hz).round() as usize).max(8);
+    let bin_8k = ((nyquist * 0.36 / bin_hz) as usize).clamp(base_win_bins, n_bins - 1);
+    let bin_nyquist_margin = (((nyquist - 300.0) / bin_hz) as usize).clamp(bin_8k, n_bins - 1);
+
+    let step_stride = (base_win_bins / 4).max(1);
+    let mut points = Vec::new();
+
+    for b in (bin_8k..=bin_nyquist_margin).step_by(step_stride) {
+        let f_b = b as f64 * bin_hz;
+        let remaining_hz = nyquist - f_b;
+
+        let pre_win_hz = (f_b * 0.25).clamp(600.0, 1500.0);
+        let pre_bins = ((pre_win_hz / bin_hz).round() as usize).max(4);
+        let b_start = b.saturating_sub(pre_bins);
+
+        let (post_start, post_end) =
+            if (18_500.0..=23_500.0).contains(&f_b) || remaining_hz < 3000.0 {
+                let trans_margin_hz = (remaining_hz * 0.35).clamp(180.0, 450.0);
+                let trans_bins = ((trans_margin_hz / bin_hz).round() as usize).max(2);
+                let p_start = (b + trans_bins).min(n_bins - 1);
+                let post_span_hz = remaining_hz.min(2500.0);
+                let p_end =
+                    n_bins.min(p_start + ((post_span_hz / bin_hz).round() as usize).max(4));
+                (p_start, p_end)
+            } else {
+                let post_win_hz = step_hz.min(remaining_hz * 0.75).max(350.0);
+                let win_bins = ((post_win_hz / bin_hz).round() as usize).max(4);
+                let p_start = b;
+                let p_end = (b + win_bins).min(n_bins);
+                (p_start, p_end)
+            };
+
+        if b_start < b && post_start < post_end.saturating_sub(2) {
+            let p_before: f64 =
+                avg_power[b_start..b].iter().map(|&p| p as f64).sum::<f64>() / (b - b_start) as f64;
+            let p_post: f64 = avg_power[post_start..post_end]
+                .iter()
+                .map(|&p| p as f64)
+                .sum::<f64>()
+                / (post_end - post_start) as f64;
+
+            let db_before = 10.0 * (p_before + 1e-12).log10();
+            let db_post = 10.0 * (p_post + 1e-12).log10();
+            let drop = db_before - db_post;
+
+            let delta_f = (f_b * 0.08).max(350.0);
+            let f1 = (f_b - delta_f).max(100.0);
+            let f2 = (f_b + delta_f).min(nyquist);
+            let octaves = (f2 / f1).log2().max(0.1);
+            let slope = drop / octaves;
+
+            if db_before >= (ref_level - 70.0).max(-85.0) {
+                points.push(SpectralDropPoint {
+                    freq_hz: f_b,
+                    drop_db: drop,
+                    slope_db_oct: slope,
+                    db_before,
+                    db_post,
+                });
+            }
+        }
+    }
+
+    points
 }

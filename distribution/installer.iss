@@ -53,6 +53,10 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM bdja_cli.exe /T"; Flags: run
 Filename: "{sys}\cmd.exe"; Parameters: "/c ping 127.0.0.1 -n 2 > nul"; Flags: runhidden
 
 [UninstallDelete]
-; Política BDJ Studio: limpiar datos y base de datos local SQLite al desinstalar
+; Política BDJ Studio (compartida con las demás apps): nada sobrevive a la desinstalación.
+Type: filesandordirs; Name: "{userappdata}\BDJ Studio\BDJ Studio Audio Analyzer"
+Type: filesandordirs; Name: "{userappdata}\BDJ Studio\bdj_studio_audio_analyzer"
+Type: filesandordirs; Name: "{userappdata}\BDJ Studio Audio Analyzer"
+Type: filesandordirs; Name: "{userappdata}\bdj_studio_audio_analyzer"
 Type: filesandordirs; Name: "{localappdata}\bdj_studio_audio_analyzer"
 Type: filesandordirs; Name: "{app}"

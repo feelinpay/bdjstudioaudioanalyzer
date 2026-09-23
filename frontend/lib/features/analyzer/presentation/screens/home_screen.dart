@@ -10,6 +10,7 @@ import '../../../../core/licensing/license_manager.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../widgets/file_details_modal.dart';
 import '../widgets/results_table.dart';
+import '../utils/friendly_verdict_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   final LicenseManager licenseManager;
@@ -44,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _selectedFilter = 'ALL';
   String _searchQuery = '';
   String _throttleMode = 'normal';
+  final Set<String> _selectedPaths = {};
 
   @override
   void initState() {
@@ -324,6 +326,314 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _toggleSelect(String path, bool selected) {
+    setState(() {
+      if (selected) {
+        _selectedPaths.add(path);
+      } else {
+        _selectedPaths.remove(path);
+      }
+    });
+  }
+
+  void _toggleSelectAll(bool selectAll) {
+    setState(() {
+      if (selectAll) {
+        _selectedPaths.addAll(_filteredReports.map((r) => r.path));
+      } else {
+        _selectedPaths.clear();
+      }
+    });
+  }
+
+  void _selectOnlyFakes() {
+    setState(() {
+      _selectedPaths.clear();
+      for (final r in _allReports) {
+        if (r.verdictCode == 'ProbableTranscode') {
+          _selectedPaths.add(r.path);
+        }
+      }
+    });
+    if (_selectedPaths.isEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay archivos falsificados o inflados en la lista actual.'),
+          backgroundColor: AppColors.verdictVerified,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _confirmDeleteSingle(String path) async {
+    final fileName = path.split(RegExp(r'[/\\]')).last;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surfaceElevated,
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppColors.verdictTranscode, size: 24),
+            SizedBox(width: 8),
+            Text('¿Eliminar archivo del disco?', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ],
+        ),
+        content: Text(
+          'Se eliminará permanentemente del almacenamiento:\n\n$fileName\n\nRuta: $path\n\n¿Estás seguro de continuar?',
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMuted)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.verdictTranscode),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Eliminar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        final f = File(path);
+        if (f.existsSync()) {
+          f.deleteSync();
+        }
+        setState(() {
+          _allReports.removeWhere((r) => r.path == path);
+          _selectedPaths.remove(path);
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Archivo eliminado: $fileName'),
+              backgroundColor: AppColors.verdictTranscode,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al eliminar $fileName: $e'),
+              backgroundColor: AppColors.verdictTranscode,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _confirmDeleteSelected() async {
+    final count = _selectedPaths.length;
+    if (count == 0) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surfaceElevated,
+        title: Row(
+          children: [
+            const Icon(Icons.delete_forever_rounded, color: AppColors.verdictTranscode, size: 26),
+            const SizedBox(width: 8),
+            Text('¿Eliminar $count canciones?', style: const TextStyle(color: Colors.white, fontSize: 16)),
+          ],
+        ),
+        content: Text(
+          'Vas a eliminar definitivamente $count archivos del disco o memoria USB.\n\nEsta acción NO se puede deshacer.\n¿Deseas borrarlos ahora?',
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMuted)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.verdictTranscode),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Eliminar $count archivos', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      int deleted = 0;
+      final toRemove = List<String>.from(_selectedPaths);
+      for (final p in toRemove) {
+        try {
+          final f = File(p);
+          if (f.existsSync()) {
+            f.deleteSync();
+          }
+          deleted++;
+        } catch (e) {
+          debugPrint('Error eliminando $p: $e');
+        }
+      }
+      setState(() {
+        _allReports.removeWhere((r) => _selectedPaths.contains(r.path));
+        _selectedPaths.clear();
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$deleted canciones eliminadas del almacenamiento.'),
+            backgroundColor: AppColors.verdictTranscode,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _moveSelectedReports() async {
+    if (_selectedPaths.isEmpty) return;
+    final destDir = await getDirectoryPath();
+    if (destDir == null || !mounted) return;
+
+    int moved = 0;
+    final toMove = List<String>.from(_selectedPaths);
+    for (final oldPath in toMove) {
+      try {
+        final file = File(oldPath);
+        if (file.existsSync()) {
+          final name = oldPath.split(RegExp(r'[/\\]')).last;
+          final newPath = '$destDir\\$name';
+          file.renameSync(newPath);
+          moved++;
+          final idx = _allReports.indexWhere((r) => r.path == oldPath);
+          if (idx >= 0) {
+            final old = _allReports[idx];
+            _allReports[idx] = old.copyWithPath(newPath);
+          }
+        }
+      } catch (e) {
+        debugPrint('Error moviendo $oldPath: $e');
+      }
+    }
+    setState(() {
+      _selectedPaths.clear();
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$moved canciones movidas a: $destDir'),
+          backgroundColor: AppColors.verdictVerified,
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'Abrir Carpeta',
+            textColor: Colors.white,
+            onPressed: () {
+              Process.run('explorer.exe', [destDir]);
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _renameSelectedWithQuality() async {
+    if (_selectedPaths.isEmpty) return;
+    final count = _selectedPaths.length;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surfaceElevated,
+        title: const Row(
+          children: [
+            Icon(Icons.drive_file_rename_outline_rounded, color: AppColors.verdictSuspicious, size: 24),
+            SizedBox(width: 8),
+            Text('Renombrar con Calidad Real', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ],
+        ),
+        content: Text(
+          'Se antepondrá la etiqueta de calidad real al nombre de $count canciones.\n\nEjemplos:\n• Canción.mp3 ➔ [128k] Canción.mp3\n• Pista.wav ➔ [Fake-128k] Pista.wav\n• Audio.wav ➔ [Lossless] Audio.wav\n\nEsto te permitirá ver la calidad de inmediato en Rekordbox, Serato o VirtualDJ.\n¿Deseas renombrarlas?',
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMuted)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.verdictSuspicious),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Renombrar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    int renamed = 0;
+    final toRename = List<String>.from(_selectedPaths);
+    for (final p in toRename) {
+      try {
+        final file = File(p);
+        if (file.existsSync()) {
+          final dir = file.parent.path;
+          final baseName = p.split(RegExp(r'[/\\]')).last;
+          final rep = _allReports.firstWhere((r) => r.path == p);
+
+          String prefix = '[Real]';
+          if (rep.verdictCode == 'ProbableTranscode') {
+            final bw = rep.effectiveBandwidthHz ?? 0;
+            if (bw <= 16500) {
+              prefix = '[Fake-128k]';
+            } else if (bw <= 18500) {
+              prefix = '[Fake-192k]';
+            } else {
+              prefix = '[Fake-256k]';
+            }
+          } else if (rep.verdictCode == 'LosslessVerified' || rep.verdictCode == 'LikelyLossless') {
+            prefix = '[Lossless]';
+          } else if (rep.verdictCode == 'Inconclusive') {
+            prefix = '[NoConcluyente]';
+          } else if (rep.facts.containerBitrateKbps != null) {
+            prefix = '[${rep.facts.containerBitrateKbps}k]';
+          }
+
+          if (!baseName.startsWith('[')) {
+            final newName = '$prefix $baseName';
+            final newPath = '$dir\\$newName';
+            file.renameSync(newPath);
+            renamed++;
+
+            final idx = _allReports.indexWhere((r) => r.path == p);
+            if (idx >= 0) {
+              final old = _allReports[idx];
+              _allReports[idx] = old.copyWithPath(newPath);
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Error renombrando $p: $e');
+      }
+    }
+
+    setState(() {
+      _selectedPaths.clear();
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$renamed canciones renombradas con su calidad real.'),
+          backgroundColor: AppColors.verdictVerified,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
   List<FileReportFfi> get _filteredReports {
     return _allReports.where((r) {
       if (_selectedFilter != 'ALL' && r.verdictCode != _selectedFilter) {
@@ -385,6 +695,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             Expanded(
                               child: ResultsTable(
                                 reports: _filteredReports,
+                                selectedPaths: _selectedPaths,
+                                onToggleSelect: _toggleSelect,
+                                onToggleSelectAll: _toggleSelectAll,
+                                onSelectOnlyFakes: _selectOnlyFakes,
+                                onDeleteSingle: _confirmDeleteSingle,
                                 onSelectReport: (r) {
                                   showDialog(
                                     context: context,
@@ -393,6 +708,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                 },
                               ),
                             ),
+                            if (_selectedPaths.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              _buildBatchActionBar(),
+                            ],
                           ],
                         ],
                       ),
@@ -408,123 +727,188 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildHeader() {
-    return Container(
-      height: 62,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(
-        color: AppColors.surfaceElevated,
-        border: Border(bottom: BorderSide(color: AppColors.surfaceBorder)),
-      ),
-      child: Row(
-        children: [
-          Image.file(
-            File('logo.png'),
-            width: 34,
-            height: 34,
-            errorBuilder: (_, __, ___) => const Icon(
-              Icons.graphic_eq_rounded,
-              color: AppColors.electricCyan,
-              size: 32,
-            ),
+    return LayoutBuilder(
+      builder: (_, constraints) {
+        final isCompact = constraints.maxWidth < 1050;
+        final isVeryCompact = constraints.maxWidth < 850;
+
+        return Container(
+          height: 62,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: const BoxDecoration(
+            color: AppColors.surfaceElevated,
+            border: Border(bottom: BorderSide(color: AppColors.surfaceBorder)),
           ),
-          const SizedBox(width: 14),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Row(
-                children: [
-                  const Text(
-                    'BDJ STUDIO',
-                    style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 14.5,
-                      letterSpacing: 1.1,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  const Text(
-                    'AUDIO ANALYZER',
-                    style: TextStyle(
-                      color: AppColors.electricCyan,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 14.5,
-                      letterSpacing: 1.1,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: AppColors.electricCyan.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: AppColors.electricCyan.withOpacity(0.3)),
-                    ),
-                    child: Text(
-                      'v1.0 (Rev ${engineRevision()})',
-                      style: const TextStyle(
-                        color: AppColors.electricCyan,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 2),
-              const Text(
-                'Control de calidad forense para DJs · 100% Offline',
-                style: TextStyle(color: AppColors.textDimmed, fontSize: 11),
-              ),
-            ],
-          ),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: AppColors.verdictVerified.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: AppColors.verdictVerified.withOpacity(0.4)),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.verified_rounded, color: AppColors.verdictVerified, size: 16),
-                SizedBox(width: 6),
-                Text(
-                  'Licencia SPP3 Verificada (Offline)',
-                  style: TextStyle(
-                    color: AppColors.verdictVerified,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.bold,
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset(
+                  'assets/images/logo.png',
+                  width: 34,
+                  height: 34,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(
+                    Icons.graphic_eq_rounded,
+                    color: AppColors.electricCyan,
+                    size: 32,
                   ),
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          IconButton(
-            tooltip: 'Diagnóstico del motor',
-            icon: const Icon(Icons.health_and_safety_outlined, color: AppColors.textSecondary, size: 20),
-            onPressed: () async {
-              final diag = await diagnostics();
-              if (mounted) {
-                showDialog(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    backgroundColor: AppColors.surfaceModal,
-                    title: const Text('Diagnóstico del Motor Nativo', style: TextStyle(color: AppColors.textPrimary)),
-                    content: Text(diag, style: const TextStyle(color: AppColors.textSecondary, fontFamily: 'Consolas')),
-                    actions: [
-                      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text(
+                        'BDJ STUDIO',
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                          letterSpacing: 0.9,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      const Text(
+                        'AUDIO ANALYZER',
+                        style: TextStyle(
+                          color: AppColors.electricCyan,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                          letterSpacing: 0.9,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: AppColors.electricCyan.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: AppColors.electricCyan.withOpacity(0.3)),
+                        ),
+                        child: Text(
+                          'v1.0 (Rev ${engineRevision()})',
+                          style: const TextStyle(
+                            color: AppColors.electricCyan,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
-                );
-              }
+                  if (!isVeryCompact) ...[
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Verifica la calidad real de tu música · 100% Offline y Seguro',
+                      style: TextStyle(color: AppColors.textDimmed, fontSize: 10.5),
+                    ),
+                  ],
+                ],
+              ),
+              const Spacer(),
+              // Botones de acción principales
+              ElevatedButton.icon(
+                icon: const Icon(Icons.audio_file_rounded, size: 14),
+                label: Text(isCompact ? 'Archivos' : 'Agregar Archivos',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.electricCyan,
+                  foregroundColor: AppColors.backgroundAbyssal,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                ),
+                onPressed: _isAnalyzing ? null : _pickAndAnalyzeFiles,
+              ),
+              const SizedBox(width: 6),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.folder_open_rounded, size: 14),
+                label: Text(isCompact ? 'Carpeta' : 'Agregar Carpeta',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.textPrimary,
+                  side: const BorderSide(color: AppColors.surfaceBorder),
+                  backgroundColor: AppColors.surfaceElevated,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                ),
+                onPressed: _isAnalyzing ? null : _pickAndScanDirectory,
+              ),
+              if (_volumes.any((v) => v.isRemovable)) ...[
+                const SizedBox(width: 6),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.usb_rounded, size: 14),
+                  label: Text(
+                    isCompact
+                        ? 'USB (${_volumes.firstWhere((v) => v.isRemovable).label.isEmpty ? _volumes.firstWhere((v) => v.isRemovable).path : _volumes.firstWhere((v) => v.isRemovable).label})'
+                        : 'Escanear USB (${_volumes.firstWhere((v) => v.isRemovable).label.isEmpty ? _volumes.firstWhere((v) => v.isRemovable).path : _volumes.firstWhere((v) => v.isRemovable).label})',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.electricCyan.withOpacity(0.18),
+                    foregroundColor: AppColors.electricCyan,
+                    side: const BorderSide(color: AppColors.electricCyan),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  ),
+                  onPressed: _isAnalyzing ? null : () => _scanFolder(_volumes.firstWhere((v) => v.isRemovable).path),
+                ),
+              ],
+              const SizedBox(width: 8),
+              Tooltip(
+                message: 'Licencia SPP3 Verificada (Offline)',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.verdictVerified.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.verdictVerified.withOpacity(0.4)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.verified_rounded, color: AppColors.verdictVerified, size: 15),
+                      if (!isCompact) ...[
+                        const SizedBox(width: 5),
+                        const Text(
+                          'SPP3 Offline',
+                          style: TextStyle(
+                            color: AppColors.verdictVerified,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Diagnóstico del motor',
+                icon: const Icon(Icons.health_and_safety_outlined, color: AppColors.textSecondary, size: 19),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            onPressed: () async {
+              final diag = await diagnostics();
+              if (!mounted) return;
+              showDialog(
+                context: context,
+                builder: (dialogCtx) => AlertDialog(
+                  backgroundColor: AppColors.surfaceModal,
+                  title: const Text('Diagnóstico del Motor Nativo', style: TextStyle(color: AppColors.textPrimary)),
+                  content: Text(diag, style: const TextStyle(color: AppColors.textSecondary, fontFamily: 'Consolas')),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Cerrar')),
+                  ],
+                ),
+              );
             },
           ),
         ],
       ),
+    );
+      },
     );
   }
 
@@ -619,7 +1003,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Icon(Icons.storage_rounded, color: AppColors.electricCyan, size: 18),
                     SizedBox(width: 8),
                     Text(
-                      'UNIDADES DEL SISTEMA',
+                      'DISCOS Y MEMORIAS USB',
                       style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.8),
                     ),
                   ],
@@ -743,7 +1127,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'INTENSIDAD DE CPU',
+                        'VELOCIDAD DE ANÁLISIS',
                         style: TextStyle(
                           color: AppColors.textDimmed,
                           fontSize: 9.5,
@@ -754,38 +1138,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          _buildThrottleOption('turbo', 'Turbo', Icons.bolt_rounded),
+                          _buildThrottleOption('turbo', 'Rápido', Icons.bolt_rounded),
                           const SizedBox(width: 4),
-                          _buildThrottleOption('normal', 'Normal', Icons.speed_rounded),
+                          _buildThrottleOption('normal', 'Equilibrado', Icons.speed_rounded),
                           const SizedBox(width: 4),
                           _buildThrottleOption('silent', 'Silencioso', Icons.nightlight_round),
                         ],
                       ),
                     ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.folder_open_rounded, size: 18),
-                  label: const Text('Escanear Carpeta'),
-                  onPressed: _isAnalyzing ? null : _pickAndScanDirectory,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.surfaceElevated,
-                    foregroundColor: AppColors.textPrimary,
-                    side: const BorderSide(color: AppColors.surfaceBorder),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.audio_file_rounded, size: 18),
-                  label: const Text('Seleccionar Archivos'),
-                  onPressed: _isAnalyzing ? null : _pickAndAnalyzeFiles,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.electricCyan,
-                    foregroundColor: AppColors.backgroundAbyssal,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    textStyle: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
@@ -837,103 +1197,220 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildBigDropZone() {
     return Expanded(
       child: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 620, maxHeight: 380),
-          decoration: BoxDecoration(
-            color: _isDragging ? AppColors.electricCyan.withOpacity(0.08) : AppColors.surfaceElevated,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: _isDragging ? AppColors.electricCyan : AppColors.surfaceBorder,
-              width: _isDragging ? 2.5 : 1.5,
+        child: InkWell(
+          onTap: _isAnalyzing ? null : _pickAndAnalyzeFiles,
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 620, maxHeight: 340),
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+            decoration: BoxDecoration(
+              color: _isDragging ? AppColors.electricCyan.withOpacity(0.08) : AppColors.surfaceElevated,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _isDragging ? AppColors.electricCyan : AppColors.surfaceBorder,
+                width: _isDragging ? 2.5 : 1.5,
+              ),
             ),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.electricCyan.withOpacity(0.12),
-                  border: Border.all(color: AppColors.electricCyan.withOpacity(0.4)),
-                ),
-                child: const Icon(Icons.cloud_upload_outlined, color: AppColors.electricCyan, size: 36),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Arrastra y suelta aquí tus archivos o carpetas de audio',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Compatible con WAV, FLAC, AIFF, MP3, AAC, ALAC, OGG · Muestreo forense rápido',
-                style: TextStyle(
-                  color: AppColors.textDimmed,
-                  fontSize: 12.5,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.file_open_rounded, size: 18),
-                    label: const Text('Elegir Archivos'),
-                    onPressed: _pickAndAnalyzeFiles,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.electricCyan,
-                      side: const BorderSide(color: AppColors.electricCyan),
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.electricCyan.withOpacity(0.12),
+                    border: Border.all(color: AppColors.electricCyan.withOpacity(0.4)),
                   ),
-                  const SizedBox(width: 14),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.folder_shared_rounded, size: 18),
-                    label: const Text('Elegir Carpeta'),
-                    onPressed: _pickAndScanDirectory,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.electricCyan,
-                      foregroundColor: AppColors.backgroundAbyssal,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                      textStyle: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
+                  child: const Icon(Icons.cloud_upload_rounded, color: AppColors.electricCyan, size: 36),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Arrastra y suelta aquí tus canciones o carpetas',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
                   ),
-                ],
-              ),
-            ],
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Analiza la calidad real de cualquier formato de audio.\nDetecta pistas de baja fidelidad o archivos inflados a WAV/FLAC.',
+                  style: TextStyle(
+                    color: AppColors.textDimmed,
+                    fontSize: 12.5,
+                    height: 1.4,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceCard,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.surfaceBorder),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.touch_app_rounded, size: 14, color: AppColors.electricCyan),
+                      SizedBox(width: 6),
+                      Text(
+                        'Haz clic en este recuadro o usa los botones superiores para examinar',
+                        style: TextStyle(color: AppColors.textSecondary, fontSize: 11.5),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Compatible con WAV, FLAC, AIFF, MP3, AAC, ALAC, OGG · 100% Offline',
+                  style: TextStyle(
+                    color: AppColors.textDimmed,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  Widget _buildBatchActionBar() {
+    final count = _selectedPaths.length;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.electricCyan.withOpacity(0.5)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.electricCyan.withOpacity(0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.check_circle_rounded, color: AppColors.electricCyan, size: 20),
+          const SizedBox(width: 8),
+          Text(
+            '$count ${count == 1 ? "canción seleccionada" : "canciones seleccionadas"}',
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+          ),
+          const Spacer(),
+          // Mover a carpeta
+          ElevatedButton.icon(
+            icon: const Icon(Icons.drive_file_move_rounded, size: 16),
+            label: const Text('Mover a Carpeta...', style: TextStyle(fontSize: 12)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.surfaceElevated,
+              foregroundColor: AppColors.electricCyan,
+              side: BorderSide(color: AppColors.electricCyan.withOpacity(0.5)),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+            onPressed: _moveSelectedReports,
+          ),
+          const SizedBox(width: 8),
+          // Renombrar con calidad real
+          ElevatedButton.icon(
+            icon: const Icon(Icons.drive_file_rename_outline_rounded, size: 16),
+            label: const Text('Renombrar con Calidad', style: TextStyle(fontSize: 12)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.surfaceElevated,
+              foregroundColor: AppColors.verdictSuspicious,
+              side: BorderSide(color: AppColors.verdictSuspicious.withOpacity(0.5)),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+            onPressed: _renameSelectedWithQuality,
+          ),
+          const SizedBox(width: 8),
+          // Eliminar del disco
+          ElevatedButton.icon(
+            icon: const Icon(Icons.delete_forever_rounded, size: 16),
+            label: const Text('Eliminar del Disco', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.verdictTranscode,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            ),
+            onPressed: _confirmDeleteSelected,
+          ),
+          const SizedBox(width: 12),
+          // Desmarcar
+          IconButton(
+            icon: const Icon(Icons.close_rounded, size: 18, color: AppColors.textMuted),
+            tooltip: 'Desmarcar todas',
+            onPressed: () => setState(() => _selectedPaths.clear()),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSummaryCards() {
-    return Row(
-      children: [
-        _summaryCard('TOTAL ANALIZADOS', '${_allReports.length}', AppColors.textPrimary, Icons.analytics_outlined),
-        const SizedBox(width: 10),
-        _summaryCard('LOSSLESS GENUINOS', '$_countLossless', AppColors.verdictVerified, Icons.verified_rounded),
-        const SizedBox(width: 10),
-        _summaryCard('PROBABLE TRANSCODE', '$_countTranscode', AppColors.verdictTranscode, Icons.dangerous_rounded),
-        const SizedBox(width: 10),
-        _summaryCard('SOSPECHOSOS', '$_countSuspicious', AppColors.verdictSuspicious, Icons.warning_amber_rounded),
-        const SizedBox(width: 10),
-        _summaryCard('FALLOS / INCONCLUSOS', '$_countInconclusive', AppColors.verdictInconclusive, Icons.help_outline_rounded),
-        const SizedBox(width: 10),
-        _summaryCard('DECLARADO LOSSY', '$_countDeclared', AppColors.verdictDeclared, Icons.info_outline_rounded),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 920;
+        if (isNarrow) {
+          return Column(
+            children: [
+              Row(
+                children: [
+                  _summaryCard('TOTAL', '${_allReports.length}', AppColors.textPrimary, Icons.library_music_rounded),
+                  const SizedBox(width: 8),
+                  _summaryCard('CALIDAD REAL', '$_countLossless', AppColors.verdictVerified, Icons.verified_rounded),
+                  const SizedBox(width: 8),
+                  _summaryCard('FALSO / INFLADO', '$_countTranscode', AppColors.verdictTranscode, Icons.dangerous_rounded),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _summaryCard('SOSPECHOSAS', '$_countSuspicious', AppColors.verdictSuspicious, Icons.warning_amber_rounded),
+                  const SizedBox(width: 8),
+                  _summaryCard('NO CONCLUYENTE', '$_countInconclusive', AppColors.verdictInconclusive, Icons.help_outline_rounded),
+                  const SizedBox(width: 8),
+                  _summaryCard('MP3 ESTÁNDAR', '$_countDeclared', AppColors.verdictDeclared, Icons.music_note_rounded),
+                ],
+              ),
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            _summaryCard('TOTAL ANALIZADAS', '${_allReports.length}', AppColors.textPrimary, Icons.library_music_rounded),
+            const SizedBox(width: 8),
+            _summaryCard('CALIDAD REAL', '$_countLossless', AppColors.verdictVerified, Icons.verified_rounded),
+            const SizedBox(width: 8),
+            _summaryCard('FALSO / INFLADO', '$_countTranscode', AppColors.verdictTranscode, Icons.dangerous_rounded),
+            const SizedBox(width: 8),
+            _summaryCard('SOSPECHOSAS', '$_countSuspicious', AppColors.verdictSuspicious, Icons.warning_amber_rounded),
+            const SizedBox(width: 8),
+            _summaryCard('NO CONCLUYENTE', '$_countInconclusive', AppColors.verdictInconclusive, Icons.help_outline_rounded),
+            const SizedBox(width: 8),
+            _summaryCard('MP3 ESTÁNDAR', '$_countDeclared', AppColors.verdictDeclared, Icons.music_note_rounded),
+          ],
+        );
+      },
     );
   }
 
   Widget _summaryCard(String title, String value, Color color, IconData icon) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: AppColors.surfaceElevated,
           borderRadius: BorderRadius.circular(10),
@@ -941,15 +1418,25 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: Row(
           children: [
-            Icon(icon, color: color, size: 20),
-            const SizedBox(width: 10),
+            Icon(icon, color: color, size: 18),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(title, style: const TextStyle(color: AppColors.textDimmed, fontSize: 9.5, fontWeight: FontWeight.bold)),
+                  Text(
+                    title,
+                    style: const TextStyle(color: AppColors.textDimmed, fontSize: 9, fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   const SizedBox(height: 2),
-                  Text(value, style: TextStyle(color: color, fontSize: 17, fontWeight: FontWeight.w900)),
+                  Text(
+                    value,
+                    style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w900),
+                    maxLines: 1,
+                  ),
                 ],
               ),
             ),
@@ -962,22 +1449,35 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildFilterToolbar() {
     return Row(
       children: [
-        _filterChip('ALL', 'Todos (${_allReports.length})'),
-        const SizedBox(width: 6),
-        _filterChip('LosslessVerified', 'Lossless ($countVerified)'),
-        const SizedBox(width: 6),
-        _filterChip('ProbableTranscode', 'Transcodes ($_countTranscode)'),
-        const SizedBox(width: 6),
-        _filterChip('Suspicious', 'Sospechosos ($_countSuspicious)'),
-        const SizedBox(width: 6),
-        _filterChip('Inconclusive', 'Inconcluso ($_countInconclusive)'),
-        const SizedBox(width: 6),
-        _filterChip('DeclaredLossy', 'Declarado ($_countDeclared)'),
-        const SizedBox(width: 16),
+        // Chips en scroll horizontal fluido para que nunca estrangulen la búsqueda
         Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _filterChip('ALL', 'Todas (${_allReports.length})'),
+                const SizedBox(width: 6),
+                _filterChip('LosslessVerified', 'Calidad Real ($_countLossless)'),
+                const SizedBox(width: 6),
+                _filterChip('ProbableTranscode', 'Falsos / Inflados ($_countTranscode)'),
+                const SizedBox(width: 6),
+                _filterChip('Suspicious', 'Sospechosas ($_countSuspicious)'),
+                const SizedBox(width: 6),
+                _filterChip('Inconclusive', 'No Concluyente ($_countInconclusive)'),
+                const SizedBox(width: 6),
+                _filterChip('DeclaredLossy', 'MP3 ($_countDeclared)'),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        // Buscador con ancho controlado
+        SizedBox(
+          width: 200,
+          height: 34,
           child: Container(
-            height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
               color: AppColors.surfaceElevated,
               borderRadius: BorderRadius.circular(8),
@@ -985,15 +1485,15 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.search_rounded, color: AppColors.textDimmed, size: 16),
-                const SizedBox(width: 8),
+                const Icon(Icons.search_rounded, color: AppColors.textDimmed, size: 15),
+                const SizedBox(width: 6),
                 Expanded(
                   child: TextField(
                     onChanged: (val) => setState(() => _searchQuery = val),
-                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 12.5),
+                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 11.5),
                     decoration: const InputDecoration(
-                      hintText: 'Filtrar por nombre o ruta...',
-                      hintStyle: TextStyle(color: AppColors.textDimmed, fontSize: 12),
+                      hintText: 'Buscar pista...',
+                      hintStyle: TextStyle(color: AppColors.textDimmed, fontSize: 11),
                       border: InputBorder.none,
                       isDense: true,
                       contentPadding: EdgeInsets.zero,
@@ -1002,7 +1502,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 if (_searchQuery.isNotEmpty)
                   IconButton(
-                    icon: const Icon(Icons.clear_rounded, size: 14, color: AppColors.textDimmed),
+                    icon: const Icon(Icons.clear_rounded, size: 13, color: AppColors.textDimmed),
                     onPressed: () => setState(() => _searchQuery = ''),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -1011,24 +1511,33 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 8),
         IconButton(
-          tooltip: 'Exportar reporte CSV',
-          icon: const Icon(Icons.table_view_rounded, color: AppColors.electricCyan, size: 20),
+          tooltip: 'Exportar reporte a Excel (CSV)',
+          icon: const Icon(Icons.table_view_rounded, color: AppColors.electricCyan, size: 18),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
           onPressed: _allReports.isEmpty ? null : _exportCsv,
         ),
         IconButton(
-          tooltip: 'Exportar reporte JSON',
-          icon: const Icon(Icons.code_rounded, color: AppColors.electricCyan, size: 20),
+          tooltip: 'Exportar reporte técnico (JSON)',
+          icon: const Icon(Icons.code_rounded, color: AppColors.electricCyan, size: 18),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
           onPressed: _allReports.isEmpty ? null : _exportJson,
         ),
         IconButton(
           tooltip: 'Limpiar lista',
-          icon: const Icon(Icons.delete_outline_rounded, color: AppColors.textDimmed, size: 20),
+          icon: const Icon(Icons.delete_outline_rounded, color: AppColors.textDimmed, size: 18),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
           onPressed: _allReports.isEmpty
               ? null
               : () {
-                  setState(() => _allReports.clear());
+                  setState(() {
+                    _allReports.clear();
+                    _selectedPaths.clear();
+                  });
                 },
         ),
       ],
