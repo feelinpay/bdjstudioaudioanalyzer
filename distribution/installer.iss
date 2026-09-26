@@ -59,4 +59,44 @@ Type: filesandordirs; Name: "{userappdata}\BDJ Studio\bdj_studio_audio_analyzer"
 Type: filesandordirs; Name: "{userappdata}\BDJ Studio Audio Analyzer"
 Type: filesandordirs; Name: "{userappdata}\bdj_studio_audio_analyzer"
 Type: filesandordirs; Name: "{localappdata}\bdj_studio_audio_analyzer"
+Type: filesandordirs; Name: "{localappdata}\BDJ Studio\BDJ Studio Audio Analyzer"
+Type: filesandordirs; Name: "{localappdata}\BDJ Studio\bdj_studio_audio_analyzer"
 Type: filesandordirs; Name: "{app}"
+
+[Code]
+// Eliminación forzada y recursiva de todos los datos en AppData al desinstalar.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataDir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    // 1. Borrar datos de Roaming
+    DataDir := ExpandConstant('{userappdata}\BDJ Studio\BDJ Studio Audio Analyzer');
+    if DirExists(DataDir) then DelTree(DataDir, True, True, True);
+
+    DataDir := ExpandConstant('{userappdata}\BDJ Studio\bdj_studio_audio_analyzer');
+    if DirExists(DataDir) then DelTree(DataDir, True, True, True);
+
+    DataDir := ExpandConstant('{userappdata}\BDJ Studio Audio Analyzer');
+    if DirExists(DataDir) then DelTree(DataDir, True, True, True);
+
+    DataDir := ExpandConstant('{userappdata}\bdj_studio_audio_analyzer');
+    if DirExists(DataDir) then DelTree(DataDir, True, True, True);
+
+    // 2. Borrar datos de Local
+    DataDir := ExpandConstant('{localappdata}\BDJ Studio\BDJ Studio Audio Analyzer');
+    if DirExists(DataDir) then DelTree(DataDir, True, True, True);
+
+    DataDir := ExpandConstant('{localappdata}\BDJ Studio\bdj_studio_audio_analyzer');
+    if DirExists(DataDir) then DelTree(DataDir, True, True, True);
+
+    DataDir := ExpandConstant('{localappdata}\bdj_studio_audio_analyzer');
+    if DirExists(DataDir) then DelTree(DataDir, True, True, True);
+
+    // 3. Limpieza de carpetas de marca padre:
+    // RemoveDir SOLO tiene éxito si la carpeta está completamente vacía (no quedan otras apps).
+    RemoveDir(ExpandConstant('{userappdata}\BDJ Studio'));
+    RemoveDir(ExpandConstant('{localappdata}\BDJ Studio'));
+  end;
+end;
